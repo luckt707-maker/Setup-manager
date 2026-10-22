@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="sm-token" content="__SM_TOKEN__">
+<title>Setup Manager</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛠️</text></svg>">
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--text:#1b1f24;--muted:#667085;--line:#e3e6ea;--accent:#2563eb;--ok:#15803d;--bad:#b91c1c;--log:#0f172a;--logt:#d1d5db;--py:#2563eb;--js:#15803d;--net:#7c3aed;--other:#64748b}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#161b22;--text:#e6edf3;--muted:#8b949e;--line:#2a313c;--accent:#58a6ff;--ok:#3fb950;--bad:#f85149;--log:#010409;--py:#58a6ff;--js:#3fb950;--net:#a78bfa}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--text);height:100vh;display:grid;grid-template-columns:290px 1fr;grid-template-rows:auto 1fr}
+header{grid-column:1/3;display:flex;gap:12px;align-items:center;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:16px;margin:0}header .sp{flex:1}.pill{font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+.pill.ok{color:var(--ok);border-color:var(--ok)}.pill.bad{color:var(--bad);border-color:var(--bad)}
+aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+aside .box{padding:10px}input,select,textarea{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit}
+#plist{overflow:auto;flex:1;padding:0 6px 10px}.proj{display:block;width:100%;text-align:left;padding:8px;border:0;background:none;color:inherit;border-radius:6px;cursor:pointer}
+.proj:hover,.proj.sel{background:var(--bg)}.proj.sel{outline:2px solid var(--accent)}.proj small{display:block;color:var(--muted);margin-top:2px}
+.badge{display:inline-block;font-size:11px;font-weight:600;color:#fff;padding:1px 7px;border-radius:99px;margin-right:4px;background:var(--other)}
+.badge.python{background:var(--py)}.badge.nodejs{background:var(--js)}.badge.dotnet{background:var(--net)}
+main{overflow:auto;padding:16px;display:flex;flex-direction:column;gap:14px;min-height:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}.card h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0 0 10px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button.b{padding:7px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);cursor:pointer;font:inherit}
+button.b:hover:not(:disabled){border-color:var(--accent)}button.b.pri{background:var(--accent);border-color:var(--accent);color:#fff}button.b:disabled{opacity:.5;cursor:not-allowed}
+#log{background:var(--log);color:var(--logt);font:12.5px/1.5 ui-monospace,Consolas,monospace;padding:12px;border-radius:8px;height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.hist{display:flex;gap:6px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line);cursor:pointer}.hist:last-child{border:0}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted)}.dot.completed{background:var(--ok)}.dot.failed{background:var(--bad)}.dot.running{background:var(--accent);animation:p 1s infinite}@keyframes p{50%{opacity:.3}}
+#chat{max-height:220px;overflow:auto;margin-bottom:8px}.msg{padding:6px 9px;border-radius:8px;margin:4px 0;white-space:pre-wrap}.msg.u{background:var(--bg)}.msg.a{border:1px solid var(--line)}
+#toast{position:fixed;right:16px;bottom:16px;background:var(--text);color:var(--bg);padding:9px 14px;border-radius:8px;opacity:0;transition:.2s;pointer-events:none;max-width:420px}#toast.show{opacity:1}
+.muted{color:var(--muted)}.warn{color:var(--bad)}
+@media(max-width:760px){body{grid-template-columns:1fr;grid-template-rows:auto auto 1fr;height:auto}header{grid-column:1}aside{max-height:240px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>🛠️ Setup Manager</h1><span id="ver" class="pill"></span><span id="root" class="pill" title="Allowed projects root"></span>
+  <span class="sp"></span><span id="ai" class="pill">AI: …</span><button class="b" id="doctor">System check</button>
+</header>
+<aside>
+  <div class="box"><input id="q" placeholder="Search projects…  (press / )" autocomplete="off"></div>
+  <div id="plist"></div>
+  <div class="box"><input id="manual" placeholder="Or paste a project path" spellcheck="false"><div class="row" style="margin-top:6px"><button class="b" id="open">Open path</button><button class="b" id="refresh">↻ Refresh</button></div></div>
+</aside>
+<main>
+  <div class="card" id="head"><h2>Project</h2><div id="title" class="muted">Pick a project from the list.</div><div id="types" style="margin-top:6px"></div></div>
+  <div class="card"><h2>Actions</h2><div class="row" id="actions"></div><div class="row" id="launch" style="margin-top:10px"></div></div>
+  <div class="card"><h2>Output <span id="runlbl" class="muted"></span></h2>
+    <div id="log" aria-live="polite" tabindex="0">Nothing running yet.</div>
+    <div class="row" style="margin-top:8px"><button class="b" id="cancel" disabled>🛑 Cancel task</button><button class="b" id="copy">Copy</button><button class="b" id="dl">Download</button><button class="b" id="clear">Clear</button></div></div>
+  <div class="card"><h2>Recent tasks</h2><div id="hist" class="muted">None yet.</div></div>
+  <div class="card"><h2>Ask the AI about this project</h2><div id="chat"></div>
+    <div class="row"><input id="msg" placeholder="e.g. How do I run this?" style="flex:1"><button class="b pri" id="send">Ask</button></div></div>
+  <div class="card"><h2>Custom command</h2><div class="row"><input id="cmd" placeholder="e.g. git status" style="flex:1" spellcheck="false"><button class="b" id="runcmd">Run…</button></div>
+    <div class="muted" style="margin-top:6px">Runs inside the selected project only. Shell features (pipes, &&) are off unless enabled on the server.</div></div>
+</main>
+<div id="toast"></div>
+<script>
+const TOKEN=document.querySelector('meta[name=sm-token]').content;
+const $=id=>document.getElementById(id);let cur=null,info=null,ws=null,poll=null,history=[],taskId=null,curLabel='';
+function notify(st){if(document.hidden&&'Notification' in window&&Notification.permission==='granted')new Notification('Setup Manager',{body:curLabel+': '+st})}
+const toast=(t,bad)=>{const e=$('toast');e.textContent=t;e.style.background=bad?'var(--bad)':'';e.classList.add('show');setTimeout(()=>e.classList.remove('show'),3200)};
+async function api(path,opt={}){
+  const o={method:opt.method||'GET',headers:{'X-Setup-Token':TOKEN}};
+  if(opt.body){o.headers['Content-Type']='application/json';o.body=JSON.stringify(opt.body)}
+  const r=await fetch(path,o);let d=null;try{d=await r.json()}catch{}
+  if(!r.ok){throw new Error((d&&(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail)))||('HTTP '+r.status))}
+  return d}
+const qs=o=>'?'+new URLSearchParams(o);
+const badge=t=>{const s=document.createElement('span');s.className='badge '+t;s.textContent=t;return s};
+function log(text,reset){const l=$('log');const atBottom=l.scrollHeight-l.scrollTop-l.clientHeight<40;if(reset)l.textContent='';l.textContent+=text+'\n';if(reset||atBottom)l.scrollTop=l.scrollHeight}
+
+async function loadProjects(){
+  try{const list=await api('/projects'+qs({q:$('q').value}));const box=$('plist');box.replaceChildren();
+    if(!list.length){box.innerHTML='<div class="muted" style="padding:10px">No projects found.</div>'}
+    list.forEach(p=>{const b=document.createElement('button');b.className='proj'+(cur===p.path?' sel':'');
+      const n=document.createElement('b');n.textContent=p.name;b.append(n);const s=document.createElement('small');
+      (p.types.length?p.types:['unknown']).forEach(t=>s.append(badge(t)));b.append(s);b.onclick=()=>select(p.path);box.append(b)})
+  }catch(e){toast(e.message,1)}}
+async function select(path){
+  cur=path;$('title').textContent=path;$('types').replaceChildren();$('actions').replaceChildren();$('launch').replaceChildren();loadProjects();
+  try{info=await api('/analyze',{method:'POST',body:{path}})}catch(e){info=null;toast(e.message,1);return}
+  (info.detected||[]).forEach(t=>$('types').append(badge(t)));if(!(info.detected||[]).length)$('types').textContent='No known project type detected';
+  buildActions()}
+function act(label,fn,pri){const b=document.createElement('button');b.className='b'+(pri?' pri':'');b.textContent=label;b.onclick=async()=>{b.disabled=true;try{await fn()}catch(e){toast(e.message,1);log('❌ '+e.message)}b.disabled=false};$('actions').append(b)}
+function buildActions(){
+  const types=info.detected||[];
+  types.filter(t=>['python','nodejs','dotnet'].includes(t)).forEach(t=>{
+    act('Install '+t+' deps',()=>start('/task/install-dependencies/'+t+qs({path:cur}),'Install '+t),1);
+    act('Set up '+t,()=>start('/task/setup/'+t+qs({path:cur}),'Set up '+t))});
+  act('Quality checks',()=>start('/task/checks'+qs({project_type:'auto',path:cur}),'Quality checks'));
+  act('Outdated packages',()=>start('/task/outdated',null,{path:cur}));
+  act('Generate .env',()=>start('/task/generate-env',null,{path:cur}));
+  act('Git hooks',()=>start('/task/setup-hooks',null,{path:cur}));
+  act('Security scan',async()=>{log('🔍 Scanning…',1);const r=await api('/security-scan',{method:'POST',body:{path:cur}});
+    log('Files scanned: '+r.files_scanned+'\nFindings: '+(r.findings||[]).length+'\nMalware scan: '+((r.malware_scan||{}).status||'n/a'));
+    (r.findings||[]).slice(0,40).forEach(f=>log(' • '+Object.values(f).join(' | ')))});
+  act('Diagnose',async()=>{const r=await api('/diagnose',{method:'POST',body:{path:cur}});log(JSON.stringify(r,null,2),1)});
+  (info.candidates||[]).forEach((c,i)=>{const b=document.createElement('button');b.className='b';b.textContent='▶ '+c.label;
+    b.onclick=()=>{if(confirm('Run on this machine?\n\n'+(c.command||[]).join(' ')+'\n\nin '+cur))start('/task/launch',null,{path:cur,candidate_index:i,run_mode:'host'}).catch(e=>toast(e.message,1))};$('launch').append(b)})}
+
+async function start(url,label,body){
+  if('Notification' in window&&Notification.permission==='default')Notification.requestPermission();
+  const r=await api(url,{method:'POST',body});label=label||url;log('▶ '+label+'…',1);follow(r.task_id,label);refreshHistory()}
+function follow(id,label){
+  if(ws)ws.close();clearInterval(poll);taskId=id;curLabel=label;$('cancel').disabled=false;$('runlbl').textContent='— '+label;
+  const proto=location.protocol==='https:'?'wss':'ws';ws=new WebSocket(proto+'://'+location.host+'/ws/logs/'+id+'?token='+encodeURIComponent(TOKEN));
+  ws.onmessage=e=>{if(e.data.startsWith('[status] ')){const st=e.data.slice(9);done();notify(st);toast(st==='completed'?'✅ Finished':st==='cancelled'?'🛑 Cancelled':'❌ Failed',st==='failed');refreshHistory()}else log(e.data)};
+  ws.onerror=()=>{poll=setInterval(async()=>{try{const t=await api('/task/'+id);$('log').textContent=t.logs.join('\n');if(t.status!=='running'){clearInterval(poll);done();refreshHistory()}}catch{clearInterval(poll)}},1500)}}
+function done(){taskId=null;$('cancel').disabled=true}
+async function refreshHistory(){
+  try{history=await api('/tasks');const h=$('hist');h.replaceChildren();if(!history.length){h.textContent='None yet.';return}
+    history.slice(0,10).forEach(t=>{const d=document.createElement('div');d.className='hist';const dot=document.createElement('span');dot.className='dot '+t.status;
+      const s=document.createElement('span');s.textContent=t.label||t.task_id.slice(0,8);const m=document.createElement('span');m.className='muted';m.style.marginLeft='auto';m.textContent=new Date(t.created_at).toLocaleTimeString();
+      d.append(dot,s,m);d.onclick=async()=>{const r=await api('/task/'+t.task_id+'/logs');log(r.logs.join('\n'),1);$('runlbl').textContent='— '+(t.label||'')};h.append(d)})}catch{}}
+
+$('send').onclick=async()=>{const m=$('msg').value.trim();if(!m)return;$('msg').value='';
+  const add=(c,t)=>{const d=document.createElement('div');d.className='msg '+c;d.textContent=t;$('chat').append(d);$('chat').scrollTop=1e9;return d};
+  add('u',m);const w=add('a','…');try{const r=await api('/ai/chat',{method:'POST',body:{message:m,path:cur,include_context:!!cur}});w.textContent=r.reply||JSON.stringify(r)}catch(e){w.textContent='⚠ '+e.message}};
+$('msg').addEventListener('keydown',e=>{if(e.key==='Enter')$('send').click()});
+$('runcmd').onclick=()=>{const c=$('cmd').value.trim();if(!cur)return toast('Select a project first',1);if(!c)return;
+  if(confirm('Run this command in '+cur+'?\n\n'+c))start('/task/custom',c,{command:c,cwd:cur,confirm:true}).catch(e=>toast(e.message,1))};
+$('doctor').onclick=async()=>{const r=await api('/system/doctor');log(Object.entries(r.tools).map(([k,v])=>(v.status==='ready'?'✅ ':'❌ ')+k+(v.path?'  '+v.path:'  → '+v.url)).join('\n'),1)};
+$('cancel').onclick=async()=>{if(!taskId)return;try{await api('/task/'+taskId+'/cancel',{method:'POST'});toast('Cancelling…')}catch(e){toast(e.message,1)}};
+$('open').onclick=()=>{const p=$('manual').value.trim();if(p)select(p)};
+$('refresh').onclick=loadProjects;$('clear').onclick=()=>log('',1);
+$('copy').onclick=()=>navigator.clipboard.writeText($('log').textContent).then(()=>toast('Copied'));
+$('dl').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([$('log').textContent],{type:'text/plain'}));a.download='setup-manager-log.txt';a.click()};
+let t;$('q').oninput=()=>{clearTimeout(t);t=setTimeout(loadProjects,250)};
+addEventListener('keydown',e=>{if(e.key==='/'&&!/INPUT|TEXTAREA/.test(document.activeElement.tagName)){e.preventDefault();$('q').focus()}});
+(async()=>{try{const c=await api('/api/config');$('ver').textContent='v'+c.version;$('root').textContent='root: '+c.safe_root}catch(e){toast(e.message,1)}
+  try{const s=await api('/ai/status');const ok=s.available&&!s.message;$('ai').textContent='AI: '+(ok?'ready':s.available?'model missing':'offline');$('ai').title=s.message||'';$('ai').className='pill '+(ok?'ok':'bad')}catch{$('ai').textContent='AI: offline';$('ai').className='pill bad'}
+  loadProjects();refreshHistory()})();
+</script>
+</body>
+</html>

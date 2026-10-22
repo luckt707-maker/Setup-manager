@@ -1,0 +1,18 @@
+# Virtual environments
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Runtime state
+tasks.db
+tasks.db-shm
+tasks.db-wal
+logs/
+reports/
+
+# Local overrides
+.env

@@ -1,0 +1,52 @@
+{
+  "error: cannot find module": {
+    "name": "Node module not installed",
+    "cause": "The code imports a package that is not present in node_modules.",
+    "fix": "Run npm install in the project root"
+  },
+  "EADDRINUSE": {
+    "name": "Port already in use",
+    "cause": "Another process is already listening on the port the server wants.",
+    "fix": "Stop the other process, or start the server on a different port"
+  },
+  "error MSB": {
+    "name": ".NET build failure",
+    "cause": "MSBuild reported an error; the message above it names the real problem.",
+    "fix": "Run dotnet build with more detail: dotnet build -v detailed"
+  },
+  "gyp ERR!": {
+    "name": "node-gyp build failure",
+    "cause": "A native Node module could not be compiled, usually for want of build tools.",
+    "fix": "Install the Visual Studio Build Tools, then rebuild with npm rebuild"
+  },
+  "fatal error: python": {
+    "name": "Python headers missing",
+    "cause": "A native extension needs the Python development headers.",
+    "fix": "Install the Python development headers and set PYTHONHOME, then rebuild"
+  },
+  "linker command failed": {
+    "name": "Linker could not resolve symbols",
+    "cause": "A library the build expects is missing or was built for another architecture.",
+    "fix": "Check the library search path, and rebuild any libraries that are out of date"
+  },
+  "error: unable to access": {
+    "name": "Repository or file could not be reached",
+    "cause": "A network or permission problem stopped the download.",
+    "fix": "Check the URL, your network connection and any proxy settings"
+  },
+  "SSL certificate problem": {
+    "name": "TLS certificate could not be verified",
+    "cause": "The certificate chain is incomplete or the system trust store is out of date.",
+    "fix": "Update the system root certificates, or point the build at the right CA bundle"
+  },
+  "Permission denied (publickey)": {
+    "name": "SSH key was rejected",
+    "cause": "The remote host does not trust the key being used, or ssh-agent has none loaded.",
+    "fix": "Add the public key to the remote account, or load it: ssh-add ~/.ssh/id_ed25519"
+  },
+  "No space left on device": {
+    "name": "Disk is full",
+    "cause": "The build ran out of disk space.",
+    "fix": "Free up space, then clear the build cache and retry"
+  }
+}
