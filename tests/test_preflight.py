@@ -179,3 +179,65 @@ def test_a_file_inside_the_projects_root_is_allowed(tmp_path):
     response = _client().post("/file-safety-scan", json={"path": str(target)})
 
     assert response.status_code == 200, response.text
+
+
+# --------------------------------------------------------------------------- #
+#  Installing a project's dependencies must not run the project's code
+# --------------------------------------------------------------------------- #
+
+class _RecordingExecutor:
+    """Records the commands instead of running them."""
+
+    def __init__(self):
+        self.commands = []
+
+    def run(self, command, cwd=None, show_output=False, callback=None):
+        self.commands.append(command)
+        return True
+
+    def run_with_code(self, command, cwd=None, show_output=False, callback=None, skip_exit_codes=None):
+        self.commands.append(command)
+        return True, 0
+
+    def check_installed(self, command):
+        return True
+
+    def text(self) -> str:
+        """Every recorded command as one readable string."""
+        parts = []
+        for command in self.commands:
+            if isinstance(command, str):
+                parts.append(command)
+            else:
+                parts.append(" ".join(str(part) for part in command))
+        return " | ".join(parts)
+
+
+def test_requirements_are_installed_without_building_them(tmp_path):
+    """A source install runs the project's setup.py."""
+    from core.setup import Setup
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "requirements.txt").write_text("some-package==1.0\n", encoding="utf-8")
+
+    setup = Setup(str(project))
+    setup.executor = _RecordingExecutor()
+    setup.setup_python()
+
+    assert "--only-binary=:all:" in setup.executor.text(), setup.executor.text()
+
+
+def test_npm_install_does_not_run_the_projects_scripts(tmp_path):
+    """npm lifecycle scripts run whatever the package asks for."""
+    from core.setup import Setup
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "package.json").write_text('{"name": "x"}', encoding="utf-8")
+
+    setup = Setup(str(project))
+    setup.executor = _RecordingExecutor()
+    setup.setup_nodejs()
+
+    assert "--ignore-scripts" in setup.executor.text(), setup.executor.text()

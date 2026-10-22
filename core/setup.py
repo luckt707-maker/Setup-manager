@@ -310,8 +310,10 @@ class Setup:
         # Install requirements if exists
         req_file = Path(self.project_path) / 'requirements.txt'
         if req_file.exists():
+            # --only-binary=:all: keeps pip from building a source
+            # distribution, which runs the project's setup.py.
             if not self.executor.run(
-                [str(venv_python), '-m', 'pip', 'install', '-r', 'requirements.txt'],
+                [str(venv_python), '-m', 'pip', 'install', '--only-binary=:all:', '-r', 'requirements.txt'],
                 cwd=self.project_path, callback=callback):
                 return False
 
@@ -326,12 +328,14 @@ class Setup:
 
         # Detect package manager
         project_root = Path(self.project_path)
+        # --ignore-scripts: a package's install script runs whatever it
+        # likes, and the packages come from the project's manifest.
         if (project_root / 'yarn.lock').exists():
-            return self.executor.run("yarn install", cwd=self.project_path, callback=callback)
+            return self.executor.run("yarn install --ignore-scripts", cwd=self.project_path, callback=callback)
         elif (project_root / 'pnpm-lock.yaml').exists():
-            return self.executor.run("pnpm install", cwd=self.project_path, callback=callback)
+            return self.executor.run("pnpm install --ignore-scripts", cwd=self.project_path, callback=callback)
         else:
-            return self.executor.run("npm install", cwd=self.project_path, callback=callback)
+            return self.executor.run("npm install --ignore-scripts", cwd=self.project_path, callback=callback)
 
     def setup_dotnet(self, callback: Optional[Callable[[str], None]] = None) -> bool:
         """Setup .NET project"""
@@ -438,7 +442,7 @@ class Setup:
                     [str(venv_python), '-m', 'pip', 'install', '--upgrade', 'pip'],
                     cwd=self.project_path, callback=callback)
                 success &= self.executor.run(
-                    [str(venv_python), '-m', 'pip', 'install', '-r', 'requirements.txt'],
+                    [str(venv_python), '-m', 'pip', 'install', '--only-binary=:all:', '-r', 'requirements.txt'],
                     cwd=self.project_path, callback=callback)
             else:
                 self._emit(callback, "   ⚪ Skipping Python updates: create the venv and requirements.txt first")
