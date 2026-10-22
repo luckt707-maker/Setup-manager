@@ -3,13 +3,19 @@
   set SETUP_MANAGER_TOKEN=devtoken      (before starting the server AND here)
   venv\\Scripts\\python.exe scripts\\smoke_test.py
 
-Set SETUP_MANAGER_URL if the server is not on the default port.
+The server's address is read from the runtime state file, so this works
+even when the dashboard had to move to another port. Set
+SETUP_MANAGER_URL to point somewhere else.
 """
 import json
 import os
 import sys
 import time
 import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from core.server_state import read_state  # noqa: E402
 
 # The server echoes emoji in its task logs; a cp1252 console cannot encode
 # them, so force UTF-8 before printing.
@@ -20,7 +26,19 @@ for _stream in (sys.stdout, sys.stderr):
         except (ValueError, OSError):
             pass
 
-BASE = os.getenv("SETUP_MANAGER_URL", "http://127.0.0.1:8010")
+
+def _server_url() -> str:
+    """Where the running server is listening."""
+    override = os.getenv("SETUP_MANAGER_URL")
+    if override:
+        return override
+    state = read_state()
+    if state:
+        return state.get("url") or f"http://127.0.0.1:{state['port']}"
+    return "http://127.0.0.1:8010"
+
+
+BASE = _server_url()
 TOKEN = os.getenv("SETUP_MANAGER_TOKEN")
 if not TOKEN:
     sys.exit("Set SETUP_MANAGER_TOKEN to the same value the server was started with.")

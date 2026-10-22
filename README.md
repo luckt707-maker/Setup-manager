@@ -22,6 +22,20 @@ To run the interactive terminal UI instead:
 venv\Scripts\python.exe setup_manager.py
 ```
 
+## Ports
+
+The dashboard prefers port 8010, but it does not insist on it:
+
+- If 8010 is free, the dashboard uses it.
+- If 8010 is taken by something else, it moves up to the next free port in
+  the range (8010-8099 by default) and says so on startup.
+- If a Setup Manager is already running, a second start does not open a
+  second dashboard - it reports the address of the one that is already up.
+
+Wherever the dashboard ended up, it writes `logs/server.json` with its port,
+pid and URL, and removes that file when it stops. The CLI and the smoke
+test read it, so they always find the server wherever it went.
+
 ## Layout
 
 ```
@@ -39,6 +53,7 @@ SetupManagerv2/
     workspace.py       WorkspaceDetector, ProjectBootstrapper
     cli.py             InteractiveCLI - the terminal UI
     console.py         UTF-8 console fix (Windows consoles are cp1252)
+    server_state.py    Where the server is listening, and whether it is alive
 
   doctor/              Diagnostics and repairs
     knowledge_base.py  Known build failures: signature -> cause -> fix
@@ -123,7 +138,8 @@ All settings are environment variables.
 | Variable | Default | Meaning |
 |---|---|---|
 | `SETUP_MANAGER_HOST` | `127.0.0.1` | Interface the server binds to |
-| `SETUP_MANAGER_PORT` | `8010` | Port the server listens on |
+| `SETUP_MANAGER_PORT` | unset | Pin the server to this port. Unset, it takes the first free port in the range below. |
+| `SETUP_MANAGER_PORT_RANGE` | `8010-8099` | The ports the dashboard may use, as `start-end`. |
 | `SETUP_MANAGER_TOKEN` | random per run | API token; sent as `X-Setup-Token` |
 | `SETUP_MANAGER_SAFE_ROOT` | `C:\dev` | The only folder the API may touch |
 | `SETUP_MANAGER_TASKS_DB` | `tasks.db` | Where task history is stored |

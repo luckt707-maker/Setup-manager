@@ -1,4 +1,6 @@
 """API surface tests."""
+import json
+
 from fastapi.testclient import TestClient
 
 from app import app
@@ -12,6 +14,33 @@ def _client():
 def test_health():
     r = _client().get("/health")
     assert r.status_code == 200 and r.json()["status"] == "ok"
+
+
+def test_health_identifies_the_app():
+    """Other programs listen on ports too; /health says who is who."""
+    r = _client().get("/health")
+    assert r.json()["app"] == "setup-manager"
+
+
+def test_startup_records_where_the_server_is(tmp_path, monkeypatch):
+    monkeypatch.setenv("SETUP_MANAGER_STATE_FILE", str(tmp_path / "server.json"))
+    import app as webapp
+
+    monkeypatch.setattr(webapp, "APP_PORT", 8123)
+    with _client():
+        state = json.loads((tmp_path / "server.json").read_text(encoding="utf-8"))
+    assert state["port"] == 8123
+    assert state["url"] == "http://127.0.0.1:8123"
+
+
+def test_shutdown_forgets_where_the_server_was(tmp_path, monkeypatch):
+    monkeypatch.setenv("SETUP_MANAGER_STATE_FILE", str(tmp_path / "server.json"))
+    import app as webapp
+
+    monkeypatch.setattr(webapp, "APP_PORT", 8123)
+    with _client():
+        pass
+    assert not (tmp_path / "server.json").exists()
 
 
 def test_index_serves_the_ui():

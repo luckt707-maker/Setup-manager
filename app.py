@@ -16,6 +16,7 @@ import webbrowser
 import platform
 import re
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional
@@ -42,6 +43,13 @@ from core import (
     ProjectOrchestrator,
     SecurityScanner,
     Setup,
+)
+from core.server_state import (
+    HEALTH_MARKER,
+    choose_port,
+    clear_state,
+    port_range,
+    write_state,
 )
 from doctor import (
     BuildDoctor,
@@ -76,7 +84,29 @@ AI_TEMPERATURE = float(os.getenv("SETUP_MANAGER_AI_TEMPERATURE", "0.2"))
 AI_MAX_TOKENS = int(os.getenv("SETUP_MANAGER_AI_MAX_TOKENS", "1024"))
 
 APP_VERSION = "1.2.0"
-app = FastAPI(title="Setup Manager Web API", version=APP_VERSION, redirect_slashes=False)
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Record where the server is listening, for as long as it runs.
+
+    The state file is how the CLI, the shortcut and the smoke test find
+    the server when it could not use the preferred port.
+    """
+    try:
+        write_state(APP_PORT)
+    except OSError as exc:
+        logger.warning("Could not record the server state: %s", exc)
+    yield
+    clear_state()
+
+
+app = FastAPI(
+    title="Setup Manager Web API",
+    version=APP_VERSION,
+    redirect_slashes=False,
+    lifespan=_lifespan,
+)
 
 # --------------------------------------------------------------------------- #
 #  Security layer
@@ -363,19 +393,6 @@ def _validate_path(path: str) -> str:
     return str(p)
 
 
-def find_free_port(start_port: int = 8010, host: str = "127.0.0.1") -> int:
-    """Finds the first available port starting from start_port."""
-    port = start_port
-    while port < 65535:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.bind((host, port))
-                return port
-            except socket.error:
-                port += 1
-    raise RuntimeError("No free ports available")
-
-
 def _send_notification(title: str, message: str) -> None:
     """Best-effort desktop toast. Opt-in (SETUP_MANAGER_NOTIFY=1); never blocks a task."""
     if not NOTIFY:
@@ -631,7 +648,14 @@ async def doctor_knowledge() -> Dict[str, Any]:
 @app.get("/health")
 def health() -> Dict[str, Any]:
     count = get_db().execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
-    return {"status": "ok", "version": APP_VERSION, "tasks": count}
+    # "app" says who is answering. Another program may hold the port we
+    # wanted, and the launcher needs to tell the two apart.
+    return {
+        "status": "ok",
+        "app": HEALTH_MARKER,
+        "version": APP_VERSION,
+        "tasks": count,
+    }
 
 
 @app.get("/api/config")
@@ -1462,12 +1486,28 @@ def create_launcher_window(port: int):
 if __name__ == "__main__":
     import uvicorn
 
-    # The port defaults to 8010 so the VS Code extension always knows where to
-    # connect, but SETUP_MANAGER_PORT can move it (useful when 8010 is taken).
-    APP_PORT = int(os.getenv("SETUP_MANAGER_PORT", "8010"))
-
     auto_open = os.getenv("SETUP_MANAGER_AUTO_OPEN", "false").lower() == "true"
     headless = "--no-gui" in sys.argv
+
+    # 8010 is preferred, but the port is not always free: something else may
+    # be holding it. In that case we move up to the next free port, unless the
+    # holder is a Setup Manager already - then we open that one instead of
+    # starting a second.
+    pinned = os.getenv("SETUP_MANAGER_PORT")
+    try:
+        APP_PORT, already_running = choose_port(explicit=int(pinned) if pinned else None)
+    except RuntimeError as exc:
+        print(f"❌ ERROR: {exc}")
+        sys.exit(1)
+
+    if already_running:
+        print(f"ℹ️  Setup Manager is already running at {already_running}")
+        if auto_open and not headless:
+            webbrowser.open(already_running)
+        sys.exit(0)
+
+    if pinned is None and APP_PORT != port_range()[0]:
+        print(f"⚠️  Port {port_range()[0]} was taken, using {APP_PORT} instead.")
 
     print(f"🚀 Starting Setup Manager on http://127.0.0.1:{APP_PORT}")
     
@@ -1487,6 +1527,6 @@ if __name__ == "__main__":
     except OSError as e:
         if "Address already in use" in str(e):
             print(f"❌ ERROR: Port {APP_PORT} is already in use!")
-            print("   Fix: Close any other Setup Manager windows, or run 'taskkill /F /IM python.exe' in terminal.")
+            print("   Fix: Close the other program, or set SETUP_MANAGER_PORT to a different port.")
         else:
             raise

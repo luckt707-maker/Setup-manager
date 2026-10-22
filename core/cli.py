@@ -15,6 +15,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from .detector import ProjectDetector, QoLExtensionsRegistry
+from .server_state import find_running_instance, read_state
 from .setup import Setup
 from .workspace import ProjectBootstrapper
 
@@ -621,7 +622,12 @@ QoL Extensions Include:
             return probe.connect_ex(("127.0.0.1", port)) == 0
 
     def launch_web_interface(self):
-        """Start the web dashboard in a background process and open a browser."""
+        """Start the web dashboard in a background process and open a browser.
+
+        The dashboard may not end up on the preferred port - it moves up to
+        the next free one - so the port it actually took is read back from
+        the runtime state file rather than assumed.
+        """
         import webbrowser
 
         app_path = Path(__file__).resolve().parent.parent / "app.py"
@@ -629,15 +635,13 @@ QoL Extensions Include:
             print(f"❌ Web interface not found: {app_path}")
             return False
 
-        port = int(os.getenv("SETUP_MANAGER_PORT", "8010"))
-        url = f"http://127.0.0.1:{port}"
-
-        if self._port_is_open(port):
-            print(f"🌐 The dashboard is already running at {url}")
-            webbrowser.open(url)
+        running = find_running_instance()
+        if running:
+            print(f"🌐 The dashboard is already running at {running['url']}")
+            webbrowser.open(running["url"])
             return True
 
-        print(f"🌐 Starting the web dashboard at {url}")
+        print("🌐 Starting the web dashboard...")
         try:
             subprocess.Popen(
                 [sys.executable, str(app_path)],
@@ -649,14 +653,17 @@ QoL Extensions Include:
             print(f"❌ Could not start the web dashboard: {exc}")
             return False
 
-        # uvicorn needs a moment to bind the port before the browser can reach it.
+        # The server picks a port and records it once it is listening.
+        url = None
         for _ in range(40):
             time.sleep(0.25)
-            if self._port_is_open(port):
+            state = read_state()
+            if state and self._port_is_open(state["port"]):
+                url = state.get("url") or f"http://127.0.0.1:{state['port']}"
                 break
 
-        if not self._port_is_open(port):
-            print(f"⚠️ The dashboard did not come up on port {port}. "
+        if url is None:
+            print(f"⚠️ The dashboard did not come up. "
                   f"Try running it manually: {sys.executable} {app_path}")
             return False
 
