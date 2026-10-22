@@ -21,6 +21,8 @@ _EXPORTS = {
     "BuildDoctor": "build_doctor",
     "Diagnostic": "diagnostics",
     "check_broken_symlinks": "diagnostics",
+    "check_project_dependencies": "dependencies",
+    "format_findings": "dependencies",
     "check_python_environment": "diagnostics",
     "check_tool_versions": "diagnostics",
     "check_tooling": "diagnostics",

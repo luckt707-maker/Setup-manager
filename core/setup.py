@@ -4,6 +4,13 @@ import subprocess
 import sys
 
 from .cmdline import split_command
+from .dependencies import (
+    declared_requirements,
+    find_venv,
+    installed_distributions,
+    normalize_name,
+    site_packages_dirs,
+)
 from .detector import ProjectDetector, QoLExtensionsRegistry
 from .executor import CommandExecutor
 
@@ -211,6 +218,119 @@ class Setup:
             or any(project_root.glob('*_test.py'))
         )
 
+    def _uses_pytest(self) -> bool:
+        """Whether the project is set up for pytest.
+
+        A pytest project that is also run through unittest gives two
+        verdicts about the same tests, and unittest is the misleading one:
+        it imports every package in the tree, so a package that cannot be
+        imported is reported as a failing test.
+        """
+        project_root = Path(self.project_path)
+        if (project_root / 'pytest.ini').is_file() or (project_root / 'conftest.py').is_file():
+            return True
+        for name in ('tox.ini', 'setup.cfg'):
+            path = project_root / name
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding='utf-8', errors='replace')
+            except OSError:
+                continue
+            if '[pytest]' in text or '[tool:pytest]' in text:
+                return True
+        pyproject = project_root / 'pyproject.toml'
+        if pyproject.is_file():
+            try:
+                import tomllib
+
+                with pyproject.open('rb') as handle:
+                    data = tomllib.load(handle)
+            except (OSError, ValueError, ImportError):
+                return False
+            return 'pytest' in ((data.get('tool') or {}))
+        return False
+
+    def _missing_dependencies(self) -> List[str]:
+        """The packages the project declares that are not installed.
+
+        This is the answer to "No module named tomli": the project asked for
+        tomli and the environment does not have it.
+        """
+        project_root = Path(self.project_path).expanduser().resolve()
+        declared = declared_requirements(project_root)
+        if not declared.requirements:
+            return []
+        venv = find_venv(project_root)
+        if venv is None:
+            return [requirement.name for requirement in declared.requirements]
+        installed = installed_distributions(site_packages_dirs(venv))
+        return [
+            requirement.name
+            for requirement in declared.requirements
+            if normalize_name(requirement.name) not in installed
+        ]
+
+    def python_install_requirements(self) -> List[str]:
+        """What to give pip for this project.
+
+        A project with a requirements.txt is installed from that file; one
+        that declares its dependencies in pyproject.toml - the Poetry
+        table or the standard ``[project]`` table - is given the
+        requirements themselves.
+        """
+        project_root = Path(self.project_path).expanduser().resolve()
+        if (project_root / 'requirements.txt').is_file():
+            return ['-r', 'requirements.txt']
+        declared = declared_requirements(project_root)
+        return [requirement.to_pip() for requirement in declared.requirements]
+
+    def missing_requirements(self) -> List[Any]:
+        """The declared dependencies that are not installed, with their constraints."""
+        project_root = Path(self.project_path).expanduser().resolve()
+        declared = declared_requirements(project_root)
+        if not declared.requirements:
+            return []
+        venv = find_venv(project_root)
+        if venv is None:
+            return list(declared.requirements)
+        installed = installed_distributions(site_packages_dirs(venv))
+        return [
+            requirement
+            for requirement in declared.requirements
+            if normalize_name(requirement.name) not in installed
+        ]
+
+    def install_missing_packages(self, callback: Optional[Callable[[str], None]] = None) -> bool:
+        """Install the packages the project declares but does not have.
+
+        Only packages the project actually declares are installed: a module
+        the code imports but does not declare might be a package, or it
+        might be a file that belongs in the project, and pip cannot tell
+        the difference.
+        """
+        missing = self.missing_requirements()
+        if not missing:
+            self._emit(callback, "✅ Every declared dependency is already installed.")
+            return True
+
+        venv_python = self._venv_python()
+        if venv_python is None:
+            self._emit(
+                callback,
+                "⏭️ Skipping: this project has no virtual environment. Run 'Set up Python' first.",
+            )
+            return False
+
+        names = ", ".join(requirement.name for requirement in missing)
+        self._emit(callback, f"📦 Installing the missing dependencies: {names}")
+        return self.executor.run(
+            [str(venv_python), '-m', 'pip', 'install', '--only-binary=:all:',
+             *[requirement.to_pip() for requirement in missing]],
+            cwd=self.project_path,
+            callback=callback,
+        )
+
     def run_quality_checks(
         self,
         project_type: str,
@@ -229,6 +349,20 @@ class Setup:
                 extensions.append((category, ext))
         results = {}
 
+        # Say this before the checks run, not after they fail: "No module
+        # named tomli" is a missing dependency, and the user should not have
+        # to read a traceback to work that out.
+        missing = self._missing_dependencies()
+        if missing:
+            msg = (
+                f"\n  ⚠️ The project's dependencies are not installed: {', '.join(missing)}. "
+                "Run 'Set up Python' first, or the checks below will fail."
+            )
+            if callback:
+                callback(msg)
+            else:
+                print(msg)
+
         for category, ext in extensions:
             name = ext['name']
             if project_type == 'python' and name in {'pytest', 'unittest'} and not self._has_python_tests():
@@ -238,6 +372,16 @@ class Setup:
                 else:
                     print(msg)
                 results[name] = 'skip'
+                continue
+
+            if project_type == 'python' and name == 'unittest' and self._uses_pytest():
+                # unittest would give a second, wrong verdict about the
+                # same tests, so it does not run at all.
+                msg = "\n  ⚪ Skipping unittest: this project uses pytest"
+                if callback:
+                    callback(msg)
+                else:
+                    print(msg)
                 continue
 
             command = self._quality_command(ext['run'])
@@ -314,6 +458,24 @@ class Setup:
             # distribution, which runs the project's setup.py.
             if not self.executor.run(
                 [str(venv_python), '-m', 'pip', 'install', '--only-binary=:all:', '-r', 'requirements.txt'],
+                cwd=self.project_path, callback=callback):
+                return False
+
+        # A project that declares its dependencies in pyproject.toml - the
+        # Poetry table or the standard [project] table - needs them
+        # installed just as much as one with a requirements.txt.
+        declared = declared_requirements(project_root)
+        extra = [
+            requirement
+            for requirement in declared.requirements
+            if requirement.source != 'requirements.txt'
+        ]
+        if extra:
+            names = ", ".join(requirement.name for requirement in extra)
+            self._emit(callback, f"  📦 Installing the project's dependencies: {names}")
+            if not self.executor.run(
+                [str(venv_python), '-m', 'pip', 'install', '--only-binary=:all:',
+                 *[requirement.to_pip() for requirement in extra]],
                 cwd=self.project_path, callback=callback):
                 return False
 

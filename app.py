@@ -55,6 +55,7 @@ from doctor import (
     BuildDoctor,
     DoctorLogManager,
     KnowledgeBase,
+    check_project_dependencies,
     diagnose_build_output,
     summarize,
 )
@@ -639,6 +640,7 @@ def system_doctor() -> Dict[str, Any]:
         "npm": "https://nodejs.org/",
         "git": "https://git-scm.com/downloads",
         "docker": "https://www.docker.com/products/docker-desktop",
+        "make": "https://www.gnu.org/software/make/",
     }
     results = {}
     for tool, url in tools_to_check.items():
@@ -671,6 +673,28 @@ async def doctor_run(request: Dict[str, Any] = Body(default_factory=dict)) -> Di
     if report:
         result["report"] = str(report)
     return result
+
+
+@app.post("/doctor/dependencies")
+async def doctor_dependencies(request: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
+    """Report the dependencies and files a project is missing.
+
+    Body: {"path": "<project folder>"}. The folder is only read: nothing is
+    installed and nothing is run. The report says which packages the project
+    declares but does not have, which modules it imports that nothing
+    provides, which imports point at a file that is not there, and which
+    Node packages are missing.
+    """
+    raw_path = (request.get("path") or "").strip()
+    if not raw_path:
+        raise HTTPException(400, "A project path is required")
+    path = _validate_path(raw_path)
+    findings = await asyncio.to_thread(check_project_dependencies, Path(path))
+    return {
+        "path": path,
+        "findings": [finding.to_dict() for finding in findings],
+        "summary": summarize(findings),
+    }
 
 
 @app.post("/doctor/diagnose")
@@ -823,12 +847,17 @@ async def install_dependencies(
     path = _validate_path(path)
     project = Path(path)
     pre_commands: List[List[str]] = []
-    if project_type == "python" and (project / "requirements.txt").is_file():
+    if project_type == "python":
+        # A project can declare its dependencies in requirements.txt or in
+        # pyproject.toml; both are installed the same way.
+        requirements = Setup(path).python_install_requirements()
+        if not requirements:
+            raise HTTPException(400, "No supported dependency manifest found for this project type")
         venv_python = _project_python(project)
         if venv_python is None:  # never install into Setup Manager's own environment
             pre_commands.append([sys.executable, "-m", "venv", str(project / "venv")])
             venv_python = project / "venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-        command = [str(venv_python), "-m", "pip", "install", "--only-binary=:all:", "-r", "requirements.txt"]
+        command = [str(venv_python), "-m", "pip", "install", "--only-binary=:all:", *requirements]
     elif project_type == "nodejs" and (project / "package.json").is_file():
         manager = (
             "pnpm" if (project / "pnpm-lock.yaml").exists()
@@ -879,6 +908,43 @@ async def install_dependencies(
     background_tasks.add_task(run_install)
     return {"task_id": task_id, "malware_scan": preflight}
 
+
+@app.post("/task/install-missing")
+async def install_missing(
+    request: Dict[str, Any],
+    background_tasks: BackgroundTasks,
+) -> Dict[str, Any]:
+    """Install the dependencies a project declares but does not have.
+
+    Body: {"path": "<project directory>"}. Only packages the project
+    declares are installed, into the project's own environment; a module
+    the code imports but does not declare might be a package or a file
+    that belongs in the project, and pip cannot tell the difference.
+    """
+    path = _validate_path(request.get("path") or "")
+    project = Path(path)
+
+    preflight = await asyncio.to_thread(_scan_with_defender, project)
+    _enforce_defender_result(preflight, project)
+
+    task_id = _new_task(f"Install missing dependencies: {project.name}")
+
+    async def run_install() -> None:
+        try:
+            callback = get_log_callback(task_id)
+            setup = Setup(path)
+            success = await asyncio.to_thread(
+                _call_with_optional_callback, setup.install_missing_packages, callback=callback
+            )
+            _finish_task(task_id, "completed" if success else "failed")
+        except Exception as e:
+            logger.exception("installing missing dependencies failed")
+            get_log_callback(task_id)(f"Error: {e}")
+            _finish_task(task_id, "failed")
+
+    background_tasks.add_task(run_install)
+    return {"task_id": task_id, "malware_scan": preflight}
+
 # --------------------------------------------------------------------------- #
 #  Project Launch
 # --------------------------------------------------------------------------- #
@@ -901,6 +967,17 @@ async def launch_project(
         raise HTTPException(400, "The selected launch option is no longer available")
 
     candidate = candidates[request.candidate_index]
+
+    # The button names a program. If that program is not on the machine the
+    # run only fails later, so it is checked first and said out loud.
+    command = list(candidate["command"])
+    if command and not CommandExecutor.check_installed(command[0]):
+        raise HTTPException(
+            400,
+            f"{command[0]} is not installed, so '{candidate['label']}' cannot run. "
+            "Install it and try again.",
+        )
+
     task_id = _new_task(f"Launch: {candidate['label']}")
 
     # Determine Docker image based on candidate label or project type

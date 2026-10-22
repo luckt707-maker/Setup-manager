@@ -35,6 +35,7 @@ EXPECTED_TOOLS: Dict[str, str] = {
     "npm": "https://nodejs.org/",
     "git": "https://git-scm.com/downloads",
     "docker": "https://www.docker.com/products/docker-desktop",
+    "make": "https://www.gnu.org/software/make/",
 }
 
 #: A ``wsl.conf`` line is ``key = value``; this catches the common breakage

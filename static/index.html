@@ -90,6 +90,11 @@ function buildActions(){
     act('Install '+t+' deps',()=>start('/task/install-dependencies/'+t+qs({path:cur}),'Install '+t),1);
     act('Set up '+t,()=>start('/task/setup/'+t+qs({path:cur}),'Set up '+t))});
   act('Quality checks',()=>start('/task/checks'+qs({project_type:'auto',path:cur}),'Quality checks'));
+  act('Check dependencies',async()=>{log('🔍 Looking for missing dependencies and files…',1);const r=await api('/doctor/dependencies',{method:'POST',body:{path:cur}});
+    const mark=f=>f.status==='ok'?'✅ ':f.status==='warn'?'⚠️ ':'❌ ';
+    const lines=(r.findings||[]).map(f=>mark(f)+f.title+(f.detail?'  — '+f.detail:'')+(f.fix?'\n     → '+f.fix:''));
+    log(lines.join('\n')||'Nothing to report.',1)});
+  if(types.includes('python'))act('Install missing packages',()=>start('/task/install-missing',null,{path:cur}));
   act('Outdated packages',()=>start('/task/outdated',null,{path:cur}));
   act('Generate .env',()=>start('/task/generate-env',null,{path:cur}));
   act('Git hooks',()=>start('/task/setup-hooks',null,{path:cur}));

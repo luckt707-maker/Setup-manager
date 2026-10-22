@@ -1,14 +1,20 @@
 from pathlib import Path
 from typing import Any, Dict, List
-import importlib.metadata
 import json
 import os
-import re
 import shutil
 
+from .dependencies import (
+    declared_requirements,
+    find_venv,
+    installed_distributions,
+    normalize_name,
+    site_packages_dirs,
+)
 from .detector import ProjectDetector
 from .security import SecurityScanner
 from .setup import Setup
+from .tooling import compose_services, make_command, make_targets
 
 
 class ProjectOrchestrator:
@@ -49,45 +55,34 @@ class ProjectOrchestrator:
 
         if 'python' in self.detected_types:
             check_runtime('Python', 'python', 'https://www.python.org/downloads/')
-            requirements = self.folder_path / 'requirements.txt'
-            if requirements.is_file():
-                try:
-                    installed = {
-                        re.sub(r'[-_.]+', '-', distribution.metadata['Name']).lower()
-                        for distribution in importlib.metadata.distributions()
-                        if distribution.metadata.get('Name')
-                    }
-                    declared = set()
-                    for line in requirements.read_text(encoding='utf-8').splitlines():
-                        line = line.strip()
-                        match = re.match(r'^([A-Za-z0-9][A-Za-z0-9._-]*)', line)
-                        if match and not line.startswith(('#', '-')):
-                            declared.add(match.group(1))
-                    missing = sorted(
-                        name for name in declared
-                        if re.sub(r'[-_.]+', '-', name).lower() not in installed
-                    )
-                    checks.append({
-                        'name': 'Python dependencies',
-                        'status': 'missing' if missing else 'ready',
-                        'detail': (
-                            f'Missing: {", ".join(missing)}' if missing
-                            else f'{len(declared)} declared package(s) are installed in the Setup Manager interpreter'
-                        ),
-                        'download_url': None,
-                    })
-                    if missing:
-                        install_commands.append({
-                            'label': 'Install Python requirements',
-                            'type': 'python',
-                            'command': 'python -m pip install -r requirements.txt',
-                        })
-                except (OSError, UnicodeError) as exc:
-                    checks.append({
-                        'name': 'Python dependencies',
-                        'status': 'unknown',
-                        'detail': f'Could not read requirements.txt: {exc}',
-                        'download_url': None,
+            # The project's own environment is what matters, and its
+            # dependencies can be declared in more than one place.
+            declared = declared_requirements(self.folder_path)
+            if declared.requirements:
+                venv = find_venv(self.folder_path)
+                installed = (
+                    installed_distributions(site_packages_dirs(venv)) if venv else set()
+                )
+                missing = sorted(
+                    requirement.name
+                    for requirement in declared.requirements
+                    if normalize_name(requirement.name) not in installed
+                )
+                checks.append({
+                    'name': 'Python dependencies',
+                    'status': 'missing' if missing else 'ready',
+                    'detail': (
+                        f'Missing: {", ".join(missing)}' if missing
+                        else f'{len(declared.requirements)} declared package(s) are installed'
+                    ),
+                    'download_url': None,
+                })
+                if missing:
+                    requirements = self.setup.python_install_requirements()
+                    install_commands.append({
+                        'label': 'Install Python dependencies',
+                        'type': 'python',
+                        'command': 'python -m pip install ' + ' '.join(requirements),
                     })
 
         if 'nodejs' in self.detected_types:
@@ -239,19 +234,35 @@ class ProjectOrchestrator:
             })
 
         if 'make' in self.detected_types:
-            make_command = 'make' if shutil.which('make') else 'mingw32-make'
-            candidates.append({
-                'label': 'Make target: default',
-                'command': [make_command],
-            })
+            make_program = make_command()
+            if make_program is not None:
+                targets = make_targets(self.folder_path)
+                if targets:
+                    # Every target is a different thing to run, so every
+                    # target gets its own button.
+                    for target in targets:
+                        candidates.append({
+                            'label': f'Make target: {target}',
+                            'command': [make_program, target],
+                        })
+                else:
+                    candidates.append({
+                        'label': 'Make target: default',
+                        'command': [make_program],
+                    })
 
-        if 'docker' in self.detected_types and any(
-            (self.folder_path / filename).exists()
-            for filename in ('docker-compose.yml', 'docker-compose.yaml')
-        ):
-            candidates.append({
-                'label': 'Docker Compose',
-                'command': ['docker', 'compose', 'up'],
-            })
+        if 'docker' in self.detected_types:
+            services = compose_services(self.folder_path)
+            if services:
+                for service in services:
+                    candidates.append({
+                        'label': f'Docker service: {service}',
+                        'command': ['docker', 'compose', 'up', service],
+                    })
+            elif (self.folder_path / 'Dockerfile').is_file():
+                candidates.append({
+                    'label': 'Docker: build image',
+                    'command': ['docker', 'build', '.'],
+                })
 
         return candidates

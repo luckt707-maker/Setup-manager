@@ -25,6 +25,7 @@ from .diagnostics import (
     run_machine_diagnostics,
     summarize,
 )
+from .dependencies import check_project_dependencies
 from .log_manager import DoctorLogManager
 from .repairs import Repair, apply_repair, available_repairs
 
@@ -52,6 +53,11 @@ class BuildDoctor:
     ) -> Dict[str, Any]:
         """Run a full doctor pass and return the result as a dictionary."""
         diagnostics: List[Diagnostic] = run_machine_diagnostics(self.project_path)
+
+        if self.project_path is not None:
+            # The project's own dependencies and files are part of "is this
+            # folder ready to run".
+            diagnostics.extend(check_project_dependencies(self.project_path))
 
         build: Dict[str, Any] = {"ran": False}
         if build_command:

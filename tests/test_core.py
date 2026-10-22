@@ -17,7 +17,9 @@ def _proj(name, files):
     d = Path(tempfile.mkdtemp()) / name
     d.mkdir(parents=True, exist_ok=True)
     for fname, text in files.items():
-        (d / fname).write_text(text)
+        path = d / fname
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
     return d
 
 
@@ -158,8 +160,18 @@ class _FakeExecutor:
         return code == 0, code
 
 
+def _plain_project():
+    """A project that does not use pytest.
+
+    The repository itself uses pytest, and a pytest project no longer runs
+    through unittest as well - so the tests about the two runners need a
+    project where both of them apply.
+    """
+    return _proj("plain", {"tests/test_demo.py": "def test_ok():\n    assert True\n"})
+
+
 def _run_checks(results, project_type="python"):
-    setup = Setup(".")
+    setup = Setup(str(_plain_project()))
     setup.executor = _FakeExecutor(results)
     # Availability is probed for real (it asks the venv's interpreter), and
     # tools that are not installed there are skipped before they ever run.
@@ -194,7 +206,7 @@ def test_non_tester_exit_five_is_still_a_failure():
 
 
 def test_skip_exit_codes_are_offered_only_to_test_runners():
-    setup = Setup(".")
+    setup = Setup(str(_plain_project()))
     setup.executor = _FakeExecutor({})
     setup._check_available = lambda command: True
     setup.run_quality_checks("python")
@@ -206,7 +218,7 @@ def test_skip_exit_codes_are_offered_only_to_test_runners():
 
 def test_missing_tool_is_reported_as_a_skip():
     """A tool that is not installed is skipped, not failed."""
-    setup = Setup(".")
+    setup = Setup(str(_plain_project()))
     setup.executor = _FakeExecutor({})
     setup._check_available = lambda command: False
     results = setup.run_quality_checks("python")

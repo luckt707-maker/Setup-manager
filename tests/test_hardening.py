@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import app as webapp  # noqa: E402
 from app import app  # noqa: E402
 from core.cmdline import split_command  # noqa: E402
+from core.executor import CommandExecutor  # noqa: E402
 from core.setup import Setup  # noqa: E402
 
 
@@ -235,3 +236,43 @@ def test_commands_that_are_not_installations_are_skipped(tmp_path):
     joined = " ".join(" ".join(command) for command in recorded)
     assert "cProfile" not in joined
     assert "pdb" not in joined
+
+
+# --------------------------------------------------------------------------- #
+#  The Windows command line splitter stays the only one
+# --------------------------------------------------------------------------- #
+
+def test_nothing_else_splits_a_command_line_with_posix_rules():
+    """shlex.split eats the backslashes in a Windows path.
+
+    The splitter in core/cmdline.py is the one that matches the operating
+    system. Any other file that reaches for shlex.split is a bug waiting
+    to happen: it fails silently, as "file not found".
+    """
+    root = Path(__file__).resolve().parent.parent
+    skip = {"venv", ".venv", "tests", "reports", "logs", "knowledge", "__pycache__", ".git"}
+    offenders = []
+    for path in root.rglob("*.py"):
+        relative = path.relative_to(root)
+        if set(relative.parts[:-1]) & skip:
+            continue
+        if relative.as_posix() == "core/cmdline.py":
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if "shlex.split" in text:
+            offenders.append(relative.as_posix())
+    assert offenders == [], offenders
+
+
+def test_a_windows_path_reaches_the_child_process_intact(tmp_path):
+    """The splitter is only useful if the executor actually uses it."""
+    script = tmp_path / "hello.py"
+    script.write_text("import sys\nprint('ARG=' + sys.argv[0])\n", encoding="utf-8")
+
+    lines = []
+    ok = CommandExecutor.run(
+        f'{sys.executable} {script} --flag', callback=lines.append
+    )
+
+    assert ok is True, lines
+    assert any(f"ARG={script}" in line for line in lines), lines

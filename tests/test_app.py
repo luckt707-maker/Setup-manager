@@ -73,3 +73,105 @@ def test_config_endpoint():
     r = _client().get("/api/config", headers={"X-Setup-Token": webapp.API_TOKEN})
     assert r.status_code == 200
     assert "safe_root" in r.json()
+
+
+def _project_in_safe_root(name, files):
+    """A project folder inside the safe root the tests use."""
+    from conftest import SAFE_ROOT
+
+    project = SAFE_ROOT / name
+    project.mkdir(parents=True, exist_ok=True)
+    for filename, text in files.items():
+        path = project / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    return project
+
+
+def test_doctor_dependencies_says_what_the_folder_is_missing():
+    """The tool the user asked for: what a project is missing."""
+    import app as webapp
+
+    project = _project_in_safe_root("missing-deps", {"requirements.txt": "requests\n"})
+
+    r = _client().post(
+        "/doctor/dependencies",
+        json={"path": str(project)},
+        headers={"X-Setup-Token": webapp.API_TOKEN},
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    ids = [finding["id"] for finding in body["findings"]]
+    assert "dependencies.not_installed" in ids, body
+    detail = " ".join(finding["detail"] for finding in body["findings"])
+    assert "requests" in detail, body
+
+
+def test_doctor_dependencies_needs_the_token():
+    import app as webapp
+
+    project = _project_in_safe_root("missing-deps-unauthenticated", {"requirements.txt": "requests\n"})
+
+    r = _client().post("/doctor/dependencies", json={"path": str(project)})
+
+    assert r.status_code == 401, r.text
+
+
+def test_doctor_dependencies_refuses_a_path_outside_the_safe_root():
+    import app as webapp
+
+    r = _client().post(
+        "/doctor/dependencies",
+        json={"path": "C:\Windows"},
+        headers={"X-Setup-Token": webapp.API_TOKEN},
+    )
+
+    assert r.status_code == 400, r.text
+
+
+def test_install_missing_packages_starts_a_task():
+    """The button next to the report: put the missing packages in."""
+    import app as webapp
+
+    project = _project_in_safe_root("install-missing", {"requirements.txt": "requests\n"})
+
+    r = _client().post(
+        "/task/install-missing",
+        json={"path": str(project)},
+        headers={"X-Setup-Token": webapp.API_TOKEN},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["task_id"], r.text
+
+
+def test_install_missing_packages_refuses_a_path_outside_the_safe_root():
+    import app as webapp
+
+    r = _client().post(
+        "/task/install-missing",
+        json={"path": "C:\Windows"},
+        headers={"X-Setup-Token": webapp.API_TOKEN},
+    )
+
+    assert r.status_code == 400, r.text
+
+
+def test_launching_a_program_that_is_not_installed_says_so(tmp_path, monkeypatch):
+    """The button names a program; if it is not there, the user is told."""
+    import shutil
+
+    import app as webapp
+
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    project = _project_in_safe_root("launch-missing-program", {"main.py": "print('hi')\n"})
+
+    r = _client().post(
+        "/task/launch",
+        json={"path": str(project), "candidate_index": 0, "run_mode": "host"},
+        headers={"X-Setup-Token": webapp.API_TOKEN},
+    )
+
+    assert r.status_code == 400, r.text
+    assert "not installed" in r.json()["detail"], r.text

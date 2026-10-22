@@ -17,6 +17,7 @@ from tkinter import ttk
 from .detector import ProjectDetector, QoLExtensionsRegistry
 from .server_state import find_running_instance, read_state
 from .setup import Setup
+from .tooling import compose_services, make_command, make_targets
 from .workspace import ProjectBootstrapper
 
 
@@ -71,20 +72,36 @@ class InteractiveCLI:
             })
 
         if 'make' in detected:
-            make_command = 'make' if shutil.which('make') else 'mingw32-make'
-            candidates.append({
-                'label': 'Make target: default',
-                'command': [make_command],
-            })
+            make_program = make_command()
+            if make_program is None:
+                print("⚠️ This project has a Makefile, but Make is not installed, so there is nothing to offer.")
+            else:
+                targets = make_targets(project_root)
+                if targets:
+                    for target in targets:
+                        candidates.append({
+                            'label': f'Make target: {target}',
+                            'command': [make_program, target],
+                        })
+                else:
+                    candidates.append({
+                        'label': 'Make target: default',
+                        'command': [make_program],
+                    })
 
-        if 'docker' in detected and any(
-            (project_root / filename).exists()
-            for filename in ('docker-compose.yml', 'docker-compose.yaml')
-        ):
-            candidates.append({
-                'label': 'Docker Compose',
-                'command': ['docker', 'compose', 'up'],
-            })
+        if 'docker' in detected:
+            services = compose_services(project_root)
+            if services:
+                for service in services:
+                    candidates.append({
+                        'label': f'Docker service: {service}',
+                        'command': ['docker', 'compose', 'up', service],
+                    })
+            elif (project_root / 'Dockerfile').is_file():
+                candidates.append({
+                    'label': 'Docker: build image',
+                    'command': ['docker', 'build', '.'],
+                })
 
         return candidates
 
@@ -169,6 +186,22 @@ class InteractiveCLI:
             self.analyze_folder(folder)
         else:
             print("No folder was provided.")
+
+    def check_missing_dependencies(self):
+        """Say what a project folder is missing: packages and files."""
+        from doctor.dependencies import check_project_dependencies, format_findings
+
+        folder = input("Project folder (Enter for this one): ").strip() or os.getcwd()
+        path = Path(folder).expanduser()
+        if not path.is_dir():
+            print(f"❌ Not a folder: {path}")
+            return
+        print(f"\n🔍 Checking {path}...")
+        findings = check_project_dependencies(path)
+        print(format_findings(findings))
+        missing = [f for f in findings if f.status == "fail"]
+        if missing:
+            print(f"\n{len(missing)} thing(s) to fix.")
 
     def manage_makefile(self):
         """Create or fetch a Makefile for the current folder"""
@@ -261,10 +294,11 @@ help:
         print("11. 🌐 Launch Web Interface")
         print("12. 🌐 Network & host information")
         print("13. ⚡ Full stack auto bootstrap")
+        print("14. 🔍 Check missing dependencies and files")
         print("0. Exit")
         print("-" * 40)
 
-        return input("Enter your choice (0-13): ").strip()
+        return input("Enter your choice (0-14): ").strip()
 
     def display_actions_menu(self, detected: List[str]) -> str:
         """Display actions for detected project types"""
@@ -819,6 +853,11 @@ QoL Extensions Include:
                 else:
                     bootstrapper = ProjectBootstrapper(folder)
                     bootstrapper.bootstrap()
+                input("\nPress Enter to continue...")
+
+            elif choice == '14':
+                # What is this folder missing?
+                self.check_missing_dependencies()
                 input("\nPress Enter to continue...")
 
             else:

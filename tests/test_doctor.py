@@ -61,6 +61,7 @@ def test_tooling_check_reports_every_expected_tool():
     findings = check_tooling()
     assert {f.id for f in findings} == {
         "tool.python", "tool.node", "tool.npm", "tool.git", "tool.docker",
+        "tool.make",
     }
     for finding in findings:
         assert finding.status in ("ok", "warn")
@@ -195,3 +196,16 @@ def test_build_doctor_writes_a_report(tmp_path):
     report = doctor.write_report(result)
     assert report is not None and report.exists()
     assert json.loads(report.read_text(encoding="utf-8"))["summary"] == result["summary"]
+
+
+def test_the_doctor_pass_covers_the_project_dependencies(tmp_path):
+    """One pass over a folder should say what the folder is missing."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "requirements.txt").write_text("requests\n", encoding="utf-8")
+
+    doctor = BuildDoctor(project, log_manager=DoctorLogManager(tmp_path / "logs"), report_dir=tmp_path / "reports")
+    result = doctor.run()
+
+    ids = [finding["id"] for finding in result["diagnostics"]]
+    assert "dependencies.not_installed" in ids, result["diagnostics"]
