@@ -408,6 +408,11 @@ help:
                 else:
                     print("❌ Invalid choice")
 
+            except EOFError:
+                # The input stream ended (piped input, closed terminal).
+                # Looping here would spin forever, so leave the menu.
+                print()
+                break
             except Exception as e:
                 print(f"❌ Error: {e}")
 

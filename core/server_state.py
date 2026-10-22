@@ -115,8 +115,16 @@ def read_state(path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
 
 
 def clear_state(path: Optional[Path] = None) -> None:
-    """Forget the recorded state. Never fails if the file is already gone."""
+    """Forget the recorded state, but only when it is ours.
+
+    Two servers can run at once (the second one takes another port). The
+    one that stops must not delete the state file the other one is using,
+    or the CLI and the smoke test would lose track of the live server.
+    """
     target = Path(path) if path is not None else state_path()
+    state = read_state(target)
+    if state is not None and state.get("pid") not in (None, os.getpid()):
+        return
     try:
         target.unlink()
     except OSError:

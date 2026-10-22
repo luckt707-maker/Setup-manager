@@ -56,7 +56,14 @@ def call(path, body=None):
 
 
 print("health:", call("/health"))
-task = call("/task/custom", {"command": "echo Hello from Setup Manager", "confirm": True})["task_id"]
+# "echo" is a cmd builtin on Windows and a real program elsewhere, so the
+# command has to go through cmd.exe to exist as a program at all.
+echo_command = (
+    "cmd /c echo Hello from Setup Manager"
+    if os.name == "nt"
+    else "echo Hello from Setup Manager"
+)
+task = call("/task/custom", {"command": echo_command, "confirm": True})["task_id"]
 for _ in range(20):
     info = call(f"/task/{task}/logs")
     if info["status"] != "running":

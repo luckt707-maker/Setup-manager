@@ -126,10 +126,34 @@ NOTIFY = os.getenv("SETUP_MANAGER_NOTIFY", "0").lower() in {"1", "true", "yes"}
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 
+def _token_ok(candidate: Optional[str]) -> bool:
+    """Check a token without crashing on unusual characters.
+
+    Header values arrive as latin-1 decoded text, so a token can hold
+    characters that str-based compare_digest refuses to compare.
+    """
+    if not candidate:
+        return False
+    return secrets.compare_digest(candidate.encode("utf-8"), API_TOKEN.encode("utf-8"))
+
+
 def _origin_ok(origin: Optional[str], host: Optional[str]) -> bool:
     if not origin:
         return True  # non-browser clients (curl, tests) send no Origin
     return origin in {f"http://{host}", f"https://{host}"}
+
+
+# A VS Code webview cannot be handed a token, so it is trusted by origin.
+# The browser sets the Origin header itself, so a web page cannot fake this
+# one; every other origin has to match the host exactly.
+# A local process can set any header it likes, but it can also run commands
+# as the user directly, so the token was never a defence against it: the
+# token stops web pages, and the Origin header is what stops those.
+VSCODE_ORIGIN_PREFIX = "vscode-webview://"
+
+
+def _is_vscode(origin: Optional[str]) -> bool:
+    return bool(origin) and origin.startswith(VSCODE_ORIGIN_PREFIX)
 
 
 @app.middleware("http")
@@ -137,26 +161,21 @@ async def security_middleware(request: Request, call_next):
     path = request.url.path
     host = request.headers.get("host", "")
     origin = request.headers.get("origin")
-    
-    # ALLOW VS Code extensions (Cline/Qwen) to bypass strict origin checks
-    is_vscode = origin and (
-        origin.startswith("vscode-webview://") or 
-        origin.startswith("http://localhost") or 
-        origin.startswith("http://127.0.0.1")
-    )
-    
+
+    is_vscode = _is_vscode(origin)
+
     if not is_vscode and not _origin_ok(origin, host):
         logger.warning(f"BLOCKED Cross-origin request: Origin={origin}, Host={host}, Path={path}")
         return JSONResponse({"detail": "Cross-origin request blocked"}, status_code=403)
-        
+
     is_public = path in PUBLIC_PATHS or path.startswith("/static/")
-    has_token = secrets.compare_digest(request.headers.get("x-setup-token", ""), API_TOKEN)
-    
-    # Allow VS Code if it passes the origin check above, OR if it has the valid token
+    has_token = _token_ok(request.headers.get("x-setup-token"))
+
+    # A VS Code webview has no token; everything else needs one.
     if not is_public and not is_vscode and not has_token:
         logger.warning(f"BLOCKED Missing token: Path={path}")
         return JSONResponse({"detail": "Missing or invalid API token"}, status_code=401)
-        
+
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
@@ -279,7 +298,8 @@ def _finish_task(task_id: str, status: str, **extra: Any) -> None:
         return
     with _cancel_lock:
         event = CANCEL_EVENTS.pop(task_id, None)
-    if event is not None and event.is_set() and status == "failed":
+    # A task the user cancelled did not complete, whatever it reported.
+    if event is not None and event.is_set() and status in {"completed", "failed"}:
         status = "cancelled"
     if extra:
         get_log_callback(task_id)(f"[SYSTEM] Task finished with status: {status}. Extra: {extra}")
@@ -320,20 +340,31 @@ def get_log_callback(task_id: str) -> Callable[[str], None]:
     return _TaskLogger(task_id)
 
 
+_log_lock = threading.Lock()
+
+
 def _append_log(task_id: str, message: str) -> None:
     db = get_db()
-    row = db.execute(
-        "SELECT COALESCE(MAX(seq), -1) + 1 AS n FROM task_logs WHERE task_id = ?", (task_id,)
-    ).fetchone()
-    seq = row["n"]
-    if seq >= MAX_LOG_LINES:
-        if seq == MAX_LOG_LINES:
-            db.execute("INSERT INTO task_logs VALUES (?, ?, ?)", (task_id, seq, "[log truncated: line limit reached]"))
-            db.commit()
-        return
-    db.execute("INSERT INTO task_logs VALUES (?, ?, ?)", (task_id, seq, str(message)[:4000]))
-    db.execute("UPDATE tasks SET updated_at = ? WHERE task_id = ?", (_now_iso(), task_id))
-    db.commit()
+    # A cancel and the command's output are written from different threads,
+    # so the sequence number is handed out under a lock and computed inside
+    # the INSERT: two writers can never pick the same one.
+    with _log_lock:
+        row = db.execute(
+            "SELECT COALESCE(MAX(seq), -1) + 1 AS n FROM task_logs WHERE task_id = ?", (task_id,)
+        ).fetchone()
+        seq = row["n"]
+        if seq >= MAX_LOG_LINES:
+            if seq == MAX_LOG_LINES:
+                db.execute("INSERT INTO task_logs VALUES (?, ?, ?)", (task_id, seq, "[log truncated: line limit reached]"))
+                db.commit()
+            return
+        db.execute(
+            "INSERT INTO task_logs (task_id, seq, line) "
+            "SELECT ?, COALESCE(MAX(seq), -1) + 1, ? FROM task_logs WHERE task_id = ?",
+            (task_id, str(message)[:4000], task_id),
+        )
+        db.execute("UPDATE tasks SET updated_at = ? WHERE task_id = ?", (_now_iso(), task_id))
+        db.commit()
 
 
 def _get_task(task_id: str) -> Optional[Dict[str, Any]]:
@@ -378,6 +409,35 @@ def _validate_safe_path(path: str) -> str:
     if not resolved.is_relative_to(safe_root):
         raise HTTPException(400, f"Security Error: path is outside the allowed root {safe_root}")
     return str(resolved)
+
+
+def _allowed_file_roots() -> List[Path]:
+    """Where a file the user picked may come from.
+
+    A downloaded file lands in the Downloads folder, not in the projects
+    root, so the download folders are allowed next to the safe root.
+    """
+    home = Path.home()
+    return [_safe_root(), home / "Downloads", home / "Desktop"]
+
+
+def _validate_file_path(path: str) -> Path:
+    """A single file the user chose: it must exist and be somewhere allowed."""
+    if not path or not path.strip():
+        raise HTTPException(400, "A file path is required")
+    if "\x00" in path:
+        raise HTTPException(400, "Invalid path")
+    resolved = Path(path).expanduser().resolve()
+    for root in _allowed_file_roots():
+        if resolved.is_relative_to(root):
+            if not resolved.is_file():
+                raise HTTPException(400, "Choose an existing file")
+            return resolved
+    raise HTTPException(
+        400,
+        "Security Error: the file is outside the allowed roots "
+        f"({', '.join(str(root) for root in _allowed_file_roots())})",
+    )
 
 
 def _validate_path(path: str) -> str:
@@ -740,9 +800,7 @@ async def security_scan(request: AnalyzeRequest) -> Dict[str, Any]:
 
 @app.post("/file-safety-scan")
 async def file_safety_scan(request: FileScanRequest) -> Dict[str, Any]:
-    path = Path(request.path).expanduser().resolve()
-    if not path.is_file():
-        raise HTTPException(400, "Choose an existing downloaded file to scan")
+    path = _validate_file_path(request.path)
     return await asyncio.to_thread(_scan_with_defender, path)
 
 
@@ -941,12 +999,14 @@ def _mount_disk_image(image_path: str, dismount: bool = False) -> Dict[str, Any]
 
 @app.post("/mount")
 async def mount_image(request: MountRequest) -> Dict[str, Any]:
-    return await asyncio.to_thread(_mount_disk_image, request.image_path)
+    image = _validate_file_path(request.image_path)
+    return await asyncio.to_thread(_mount_disk_image, str(image))
 
 
 @app.post("/dismount")
 async def dismount_image(request: MountRequest) -> Dict[str, Any]:
-    return await asyncio.to_thread(_mount_disk_image, request.image_path, True)
+    image = _validate_file_path(request.image_path)
+    return await asyncio.to_thread(_mount_disk_image, str(image), True)
 
 
 # --------------------------------------------------------------------------- #
@@ -959,6 +1019,13 @@ async def setup_env(
     path: str = Query(..., description="Project directory"),
 ) -> Dict[str, str]:
     path = _validate_path(path)
+    project = Path(path)
+
+    # Pre-flight malware scan: setup runs code from the project (pip
+    # installs it, npm runs its lifecycle scripts, git runs its hooks).
+    preflight = await asyncio.to_thread(_scan_with_defender, project)
+    _enforce_defender_result(preflight, project)
+
     task_id = _new_task(f"Setup {env_type}: {Path(path).name}")
 
     async def run_setup() -> None:
@@ -1004,6 +1071,13 @@ async def install_ext(
     path: str = Query(..., description="Project directory"),
 ) -> Dict[str, str]:
     path = _validate_path(path)
+    project = Path(path)
+
+    # Pre-flight malware scan: installing packages runs the project's
+    # own build scripts.
+    preflight = await asyncio.to_thread(_scan_with_defender, project)
+    _enforce_defender_result(preflight, project)
+
     task_id = _new_task(f"Extensions: {Path(path).name}")
 
     async def run_install() -> None:
@@ -1040,6 +1114,17 @@ async def install_ext(
 # --------------------------------------------------------------------------- #
 #  Quality checks
 # --------------------------------------------------------------------------- #
+def _checks_status(results: Dict[str, Any]) -> str:
+    """A task that ran checks reports failure when a check failed.
+
+    Reporting every run as "completed" hid real failures from the user.
+    """
+    for value in (results or {}).values():
+        if str(value).strip().lower() in {"fail", "failed", "error"}:
+            return "failed"
+    return "completed"
+
+
 @app.post("/task/checks")
 async def run_checks(
     background_tasks: BackgroundTasks,
@@ -1047,6 +1132,13 @@ async def run_checks(
     path: str = Query(...),
 ) -> Dict[str, str]:
     path = _validate_path(path)
+    project = Path(path)
+
+    # Pre-flight malware scan: the test runner loads the project's own
+    # conftest.py and test files, which is code execution.
+    preflight = await asyncio.to_thread(_scan_with_defender, project)
+    _enforce_defender_result(preflight, project)
+
     task_id = _new_task(f"Quality checks: {Path(path).name}")
 
     async def run_checks_task() -> None:
@@ -1069,7 +1161,7 @@ async def run_checks(
                     f"{detected_type}: {name}": status
                     for name, status in type_results.items()
                 })
-            _finish_task(task_id, "completed", results=results)
+            _finish_task(task_id, _checks_status(results), results=results)
         except Exception as e:
             logger.exception("run_checks failed")
             get_log_callback(task_id)(f"Error: {e}")
@@ -1384,7 +1476,7 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str) -> None:
     headers = websocket.headers
     if (
         not _origin_ok(headers.get("origin"), headers.get("host"))
-        or not secrets.compare_digest(websocket.query_params.get("token", ""), API_TOKEN)
+        or not _token_ok(websocket.query_params.get("token"))
     ):
         await websocket.close(code=1008)
         return
@@ -1486,8 +1578,18 @@ def create_launcher_window(port: int):
 if __name__ == "__main__":
     import uvicorn
 
-    auto_open = os.getenv("SETUP_MANAGER_AUTO_OPEN", "false").lower() == "true"
-    headless = "--no-gui" in sys.argv
+    from core.launch_args import parse_launch_args
+
+    # The Desktop shortcut starts the app through pythonw.exe, which has no
+    # environment block to rely on, so it passes these as arguments.
+    options = parse_launch_args(sys.argv[1:])
+    if options.port is not None:
+        os.environ["SETUP_MANAGER_PORT"] = str(options.port)
+    if options.safe_root:
+        os.environ["SETUP_MANAGER_SAFE_ROOT"] = options.safe_root
+
+    auto_open = options.auto_open or os.getenv("SETUP_MANAGER_AUTO_OPEN", "false").lower() == "true"
+    headless = options.headless or "--no-gui" in sys.argv
 
     # 8010 is preferred, but the port is not always free: something else may
     # be holding it. In that case we move up to the next free port, unless the

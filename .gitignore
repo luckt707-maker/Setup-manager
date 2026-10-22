@@ -14,5 +14,8 @@ tasks.db-wal
 logs/
 reports/
 
+# Stray V8 crash logs
+isolate-*.log
+
 # Local overrides
 .env

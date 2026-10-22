@@ -150,9 +150,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     while args:
         arg = args.pop(0)
         if arg == "--build" and args:
-            import shlex
+            from core.cmdline import split_command
 
-            build = shlex.split(args.pop(0))
+            # Windows paths keep their backslashes this way; a POSIX split
+            # would eat them and the build script would not be found.
+            build = split_command(args.pop(0))
         elif not folder:
             folder = arg
 

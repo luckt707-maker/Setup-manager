@@ -1,9 +1,9 @@
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
-import shlex
 import subprocess
 import sys
 
+from .cmdline import split_command
 from .detector import ProjectDetector, QoLExtensionsRegistry
 from .executor import CommandExecutor
 
@@ -17,6 +17,16 @@ class Setup:
     # found no tests to run. For a project that uses a different test runner
     # that is the normal case, not a failure, so it is reported as a skip.
     NO_TESTS_EXIT_CODE = 5
+
+    # Only these commands install something. The rest of the registry holds
+    # run commands ('python -m cProfile', 'node --prof', 'npm audit'),
+    # and running one of those as an installation does nothing useful and
+    # can hang the task forever.
+    INSTALL_PREFIXES = {
+        'python': ('pip ', 'pip3 '),
+        'nodejs': ('npm install ', 'npm i ', 'npx '),
+        'dotnet': ('dotnet add package ',),
+    }
 
     def __init__(self, project_path: str = '.', interactive: bool = False):
         self.project_path = project_path
@@ -72,11 +82,28 @@ class Setup:
             else:
                 print(msg)
             install_command = ext['cmd']
-            if project_type == 'python' and install_command.startswith('pip '):
-                pip_args = shlex.split(install_command, posix=False)[1:]
+
+            if not self._is_install_command(project_type, install_command):
+                msg = f"  ⏭️ Skipping {ext['name']}: it is not something to install"
+                if callback:
+                    callback(msg)
+                else:
+                    print(msg)
+                continue
+
+            if project_type == 'python' and install_command.startswith(('pip ', 'pip3 ')):
                 python_executable = self._venv_python()
-                if not python_executable.exists():
-                    python_executable = Path(sys.executable)
+                if python_executable is None:
+                    msg = (
+                        "  ⏭️ Skipping Python packages: this project has no virtual "
+                        "environment. Run 'Set up Python' first."
+                    )
+                    if callback:
+                        callback(msg)
+                    else:
+                        print(msg)
+                    continue
+                pip_args = split_command(install_command)[1:]
                 install_command = [str(python_executable), '-m', 'pip', *pip_args]
 
             if self.executor.run(install_command, cwd=self.project_path, show_output=False, callback=callback):
@@ -96,16 +123,35 @@ class Setup:
 
         return success
 
-    def _venv_python(self) -> Path:
-        """Return the project virtual-environment Python executable when present"""
-        return Path(self.project_path).expanduser().resolve() / 'venv' / 'Scripts' / 'python.exe'
+    def _is_install_command(self, project_type: str, command: str) -> bool:
+        """Is this command an installation, or something the project just runs?"""
+        prefixes = self.INSTALL_PREFIXES.get(project_type, ())
+        return any(command.startswith(prefix) for prefix in prefixes)
+
+    def _venv_python(self) -> Optional[Path]:
+        """The project's own Python interpreter.
+
+        Setup Manager never installs into its own environment: a project's
+        packages belong to the project, so this returns None when the
+        project has no environment of its own.
+        """
+        root = Path(self.project_path).expanduser().resolve()
+        for folder in ('venv', '.venv'):
+            for candidate in (
+                root / folder / 'Scripts' / 'python.exe',
+                root / folder / 'bin' / 'python',
+                root / folder / 'bin' / 'python3',
+            ):
+                if candidate.exists():
+                    return candidate
+        return None
 
     def _quality_command(self, command: str) -> list:
         """Use the project virtual environment for Python quality tools"""
-        tokens = shlex.split(command, posix=False)
+        tokens = split_command(command)
         venv_python = self._venv_python()
 
-        if not venv_python.exists() or not tokens:
+        if venv_python is None or not tokens:
             return tokens
 
         python_tools = {
@@ -387,7 +433,7 @@ class Setup:
             self._emit(callback, "\n🐍 Updating Python packages...")
             requirements = Path(self.project_path) / 'requirements.txt'
             venv_python = self._venv_python()
-            if requirements.exists() and venv_python.exists():
+            if requirements.exists() and venv_python is not None:
                 success &= self.executor.run(
                     [str(venv_python), '-m', 'pip', 'install', '--upgrade', 'pip'],
                     cwd=self.project_path, callback=callback)

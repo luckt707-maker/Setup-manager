@@ -1,11 +1,13 @@
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Tuple, Union
+import locale
 import os
-import shlex
 import shutil
 import signal
 import subprocess
 import threading
 import time
+
+from core.cmdline import split_command
 
 
 def _kill_process_tree(proc: "subprocess.Popen") -> None:
@@ -22,6 +24,23 @@ def _kill_process_tree(proc: "subprocess.Popen") -> None:
         proc.kill()
     except Exception:
         pass
+
+
+def decode_output(raw: bytes) -> str:
+    """Decode a line of output from a child process.
+
+    Tools disagree about encoding: Python and Node write UTF-8, while a
+    Windows console program writes the active code page. UTF-8 is tried
+    first because it never fails on plain ASCII and it is what most
+    tools use; the code page is the fallback.
+    """
+    if isinstance(raw, str):
+        return raw
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        fallback = locale.getpreferredencoding(False) or "cp1252"
+        return raw.decode(fallback, errors="replace")
 
 
 class CommandExecutor:
@@ -98,7 +117,7 @@ class CommandExecutor:
         process = None
         try:
             if isinstance(command, str):
-                command_args = command if allow_shell else shlex.split(command)
+                command_args = command if allow_shell else split_command(command)
             else:
                 command_args = list(command)
             if not command_args:
@@ -136,12 +155,10 @@ class CommandExecutor:
                 command_args,
                 cwd=cwd,
                 shell=allow_shell and isinstance(command, str),
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
+                text=False,
                 **popen_flags,
             )
             process = running_process
@@ -152,7 +169,7 @@ class CommandExecutor:
                 if running_process.stdout is None:
                     return
                 for line in running_process.stdout:
-                    rendered = line.rstrip()
+                    rendered = decode_output(line).rstrip()
                     try:
                         if callback:
                             callback(rendered)
@@ -235,7 +252,7 @@ class CommandExecutor:
             return False
 
         try:
-            command_name = shlex.split(command, posix=False)[0]
+            command_name = split_command(command)[0]
         except (IndexError, ValueError):
             return False
         return shutil.which(command_name.strip('"')) is not None
