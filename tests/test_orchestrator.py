@@ -51,6 +51,92 @@ def make_installed(monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda name: "C:/tools/make.exe" if name == "make" else None)
 
 
+def test_a_python_program_is_not_reported_as_node_or_docker(tmp_path):
+    """Sherlock has a package.json and a Dockerfile. Neither is how it runs."""
+    project = _project(tmp_path, {
+        "requirements.txt": "requests\n",
+        "welcome_launcher.py": "print('hi')\n",
+        "package.json": '{"dependencies":{"build":"0.1.4","@dabh/diagnostics":"2.0.9"}}\n',
+        "Dockerfile": "FROM python:3.12\n",
+    })
+    venv_python = project / "venv" / ("Scripts" if sys.platform == "win32" else "bin")
+    venv_python.mkdir(parents=True)
+    (venv_python / ("python.exe" if sys.platform == "win32" else "python")).write_text("", encoding="utf-8")
+    (project / "venv" / "Lib" / "site-packages").mkdir(parents=True)
+
+    report = ProjectOrchestrator(str(project)).diagnose()
+
+    assert report["detected"] == ["python"]
+    assert [item["label"] for item in report["candidates"]] == ["Python: welcome_launcher.py"]
+    labels = [item["label"] for item in report["install_commands"]]
+    assert labels == ["Install Python dependencies"]
+    assert "npm" not in report["install_commands"][0]["command"]
+    assert str(project / "venv") in report["checks"][1]["detail"]
+    assert str(project / "venv") in report["install_commands"][0]["command"]
+    assert "-r requirements.txt" in report["install_commands"][0]["command"]
+
+
+def test_a_loose_python_file_points_at_the_real_start(tmp_path):
+    """welcome_launcher.py is a helper. The hint names the real start."""
+    project = _project(tmp_path, {
+        "welcome_launcher.py": "print('hi')\n",
+        "pyproject.toml": "[tool.poetry.scripts]\nsherlock = 'missing_package.sherlock:main'\n",
+        "pkg/__main__.py": "print('go')\n",
+    })
+
+    report = ProjectOrchestrator(str(project)).analyze()
+
+    hint = report["entry_hint"]
+    assert "welcome_launcher.py" in hint
+    assert "pkg/__main__.py" in hint
+    assert "sherlock command in pyproject.toml" in hint
+    assert ".app" not in hint
+
+
+def test_a_python_file_with_no_other_start_names_the_usual_places(tmp_path):
+    project = _project(tmp_path, {"welcome_launcher.py": "print('hi')\n"})
+
+    hint = ProjectOrchestrator(str(project)).analyze()["entry_hint"]
+
+    assert "welcome_launcher.py" in hint
+    assert "main.py" in hint
+    assert "__main__.py" in hint
+    assert ".app" in hint
+
+
+def test_sherlock_offers_its_command_instead_of_the_welcome_screen(tmp_path):
+    """welcome_launcher.py prints a banner. It is not the search command."""
+    project = _project(tmp_path, {
+        "pyproject.toml": "[tool.poetry.scripts]\nsherlock = 'sherlock_project.sherlock:main'\n",
+        "welcome_launcher.py": "print('hi')\n",
+        "sherlock_project/__init__.py": "",
+        "sherlock_project/__main__.py": "",
+    })
+    venv_python = project / "venv" / ("Scripts" if sys.platform == "win32" else "bin")
+    venv_python.mkdir(parents=True)
+    (venv_python / ("python.exe" if sys.platform == "win32" else "python")).write_text("", encoding="utf-8")
+
+    candidates = ProjectOrchestrator(str(project))._get_launch_candidates()
+
+    assert len(candidates) == 1, candidates
+    assert candidates[0]["command"][-3:] == ["-m", "sherlock_project", "--help"]
+    assert "welcome_launcher.py" not in candidates[0]["command"]
+
+
+def test_a_built_go_program_runs_its_exe(tmp_path):
+    """PhoneInfoga already has a program file. Run that, not go run."""
+    project = tmp_path / "PhoneInfoga"
+    project.mkdir()
+    (project / "go.mod").write_text("module example.com/phoneinfoga\n\ngo 1.22\n", encoding="utf-8")
+    (project / "main.go").write_text("package main\nfunc main() {}\n", encoding="utf-8")
+    exe = project / ("phoneinfoga.exe" if sys.platform == "win32" else "phoneinfoga")
+    exe.write_bytes(b"")
+
+    candidates = ProjectOrchestrator(str(project))._get_launch_candidates()
+
+    assert [item["command"] for item in candidates] == [[str(exe)]]
+
+
 def test_a_make_project_offers_a_candidate_for_every_target(tmp_path, make_installed):
     """'make build' and 'make test' are different things to run."""
     project = _project(tmp_path, {"Makefile": MAKEFILE})

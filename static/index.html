@@ -7,136 +7,383 @@
 <title>Setup Manager</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛠️</text></svg>">
 <style>
-:root{--bg:#f6f7f9;--panel:#fff;--text:#1b1f24;--muted:#667085;--line:#e3e6ea;--accent:#2563eb;--ok:#15803d;--bad:#b91c1c;--log:#0f172a;--logt:#d1d5db;--py:#2563eb;--js:#15803d;--net:#7c3aed;--other:#64748b}
-@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#161b22;--text:#e6edf3;--muted:#8b949e;--line:#2a313c;--accent:#58a6ff;--ok:#3fb950;--bad:#f85149;--log:#010409;--py:#58a6ff;--js:#3fb950;--net:#a78bfa}}
-*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--text);height:100vh;display:grid;grid-template-columns:290px 1fr;grid-template-rows:auto 1fr}
-header{grid-column:1/3;display:flex;gap:12px;align-items:center;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
-header h1{font-size:16px;margin:0}header .sp{flex:1}.pill{font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
-.pill.ok{color:var(--ok);border-color:var(--ok)}.pill.bad{color:var(--bad);border-color:var(--bad)}
-aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
-aside .box{padding:10px}input,select,textarea{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit}
-#plist{overflow:auto;flex:1;padding:0 6px 10px}.proj{display:block;width:100%;text-align:left;padding:8px;border:0;background:none;color:inherit;border-radius:6px;cursor:pointer}
-.proj:hover,.proj.sel{background:var(--bg)}.proj.sel{outline:2px solid var(--accent)}.proj small{display:block;color:var(--muted);margin-top:2px}
-.badge{display:inline-block;font-size:11px;font-weight:600;color:#fff;padding:1px 7px;border-radius:99px;margin-right:4px;background:var(--other)}
-.badge.python{background:var(--py)}.badge.nodejs{background:var(--js)}.badge.dotnet{background:var(--net)}
-main{overflow:auto;padding:16px;display:flex;flex-direction:column;gap:14px;min-height:0}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}.card h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0 0 10px}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-button.b{padding:7px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);cursor:pointer;font:inherit}
-button.b:hover:not(:disabled){border-color:var(--accent)}button.b.pri{background:var(--accent);border-color:var(--accent);color:#fff}button.b:disabled{opacity:.5;cursor:not-allowed}
-#log{background:var(--log);color:var(--logt);font:12.5px/1.5 ui-monospace,Consolas,monospace;padding:12px;border-radius:8px;height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word}
-.hist{display:flex;gap:6px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line);cursor:pointer}.hist:last-child{border:0}
-.dot{width:9px;height:9px;border-radius:50%;background:var(--muted)}.dot.completed{background:var(--ok)}.dot.failed{background:var(--bad)}.dot.running{background:var(--accent);animation:p 1s infinite}@keyframes p{50%{opacity:.3}}
-#chat{max-height:220px;overflow:auto;margin-bottom:8px}.msg{padding:6px 9px;border-radius:8px;margin:4px 0;white-space:pre-wrap}.msg.u{background:var(--bg)}.msg.a{border:1px solid var(--line)}
-#toast{position:fixed;right:16px;bottom:16px;background:var(--text);color:var(--bg);padding:9px 14px;border-radius:8px;opacity:0;transition:.2s;pointer-events:none;max-width:420px}#toast.show{opacity:1}
+:root{
+  --bg:#f0f2f5;--panel:#fff;--text:#1a1a2e;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#4f46e5;--accent-hover:#4338ca;--ok:#059669;--bad:#dc2626;
+  --log:#1e1e2e;--logt:#cdd6f4;--py:#2563eb;--js:#15803d;--net:#7c3aed;--other:#64748b;
+  --shadow:0 1px 3px rgba(0,0,0,0.08),0 1px 2px rgba(0,0,0,0.06);
+  --shadow-lg:0 4px 6px rgba(0,0,0,0.07),0 2px 4px rgba(0,0,0,0.06);
+  --radius:12px;--radius-sm:8px;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#0f1117;--panel:#1a1d27;--text:#e4e4e7;--muted:#71717a;--line:#2e2e3a;
+    --accent:#818cf8;--accent-hover:#6366f1;--ok:#34d399;--bad:#f87171;
+    --log:#181825;--py:#818cf8;--js:#34d399;--net:#a78bfa;
+    --shadow:0 1px 3px rgba(0,0,0,0.3),0 1px 2px rgba(0,0,0,0.2);
+    --shadow-lg:0 4px 6px rgba(0,0,0,0.3),0 2px 4px rgba(0,0,0,0.2);
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);height:100vh;display:grid;grid-template-columns:280px 1fr;grid-template-rows:auto 1fr;-webkit-font-smoothing:antialiased}
+
+/* Header */
+header{grid-column:1/3;display:flex;gap:16px;align-items:center;padding:16px 24px;background:var(--panel);border-bottom:1px solid var(--line);box-shadow:var(--shadow)}
+header h1{font-size:20px;font-weight:700;margin:0;letter-spacing:-0.02em}
+header .sp{flex:1}
+.pill{font-size:12px;padding:4px 10px;border-radius:99px;border:1px solid var(--line);color:var(--muted);font-weight:500;transition:all 0.2s}
+.pill.ok{color:var(--ok);border-color:var(--ok);background:rgba(5,150,105,0.08)}
+.pill.bad{color:var(--bad);border-color:var(--bad);background:rgba(220,38,38,0.08)}
+
+/* Sidebar */
+aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+aside .box{padding:16px;border-bottom:1px solid var(--line)}
+aside .box:last-child{border-bottom:none;padding-bottom:16px}
+input,select,textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font:inherit;transition:border-color 0.2s,box-shadow 0.2s}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,70,229,0.1)}
+#plist{overflow:auto;flex:1;padding:8px}
+.proj{display:block;width:100%;text-align:left;padding:12px 14px;border:0;background:none;color:inherit;border-radius:var(--radius-sm);cursor:pointer;transition:background 0.15s}
+.proj:hover{background:var(--bg)}.proj.sel{background:var(--bg);outline:2px solid var(--accent);outline-offset:-2px}
+.proj b{font-size:14px;font-weight:600;display:block;margin-bottom:4px}
+.proj small{display:block;color:var(--muted);margin-top:4px;font-size:12px}
+
+/* Badges */
+.badge{display:inline-block;font-size:11px;font-weight:600;color:#fff;padding:2px 8px;border-radius:99px;margin-right:4px;letter-spacing:0.02em}
+.badge.python{background:var(--py)}.badge.nodejs{background:var(--js)}.badge.dotnet{background:var(--net)}.badge.go{background:#0891b2}.badge.rust{background:#ea580c}.badge.ruby{background:#be185d}.badge.php{background:#4338ca}.badge.typescript{background:#2563eb}.badge.java{background:#dc2626}.badge.kotlin{background:#7c3aed}.badge.swift{background:#f59e0b}.badge.scala{background:#9333ea}.badge.make{background:#64748b}.badge.git{background:#4b5563}.badge.docker{background:#0284c7}
+
+/* Main content */
+main{overflow:auto;padding:24px;display:flex;flex-direction:column;gap:20px;min-height:0}
+
+/* Cards */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);transition:box-shadow 0.2s}
+.card:hover{box-shadow:var(--shadow-lg)}
+.card h2{font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin:0 0 14px;display:flex;align-items:center;gap:8px}
+.card h2 .icon{font-size:16px}
+
+/* Workflow steps */
+.workflow-steps{display:flex;flex-direction:column;gap:8px;margin-bottom:4px}
+.workflow-step{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);cursor:pointer;transition:all 0.15s}
+.workflow-step:hover{border-color:var(--accent);background:rgba(79,70,229,0.04);transform:translateX(2px)}
+.workflow-step .step-num{width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0}
+.workflow-step .step-label{flex:1;font-size:14px;font-weight:500}
+.workflow-step .step-type{font-size:11px;color:var(--muted);background:var(--panel);padding:2px 8px;border-radius:99px;border:1px solid var(--line)}
+.workflow-step.running .step-num{background:var(--ok);animation:p 1s infinite}
+.workflow-step.done .step-num{background:var(--ok)}
+
+/* Setup Guide steps */
+.guide-step{display:flex;align-items:flex-start;gap:14px;padding:14px 16px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);transition:all 0.15s}
+.guide-step:hover{border-color:var(--accent);background:rgba(79,70,229,0.03)}
+.guide-step .step-num{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;flex-shrink:0;margin-top:2px}
+.guide-step.done .step-num{background:var(--ok)}
+.guide-step.running .step-num{background:var(--ok);animation:p 1s infinite}
+.guide-step .step-content{flex:1;min-width:0}
+.guide-step .step-label{font-size:15px;font-weight:600;margin-bottom:2px}
+.guide-step .step-desc{font-size:13px;color:var(--muted);margin-bottom:4px}
+.guide-step .step-cmd{font-size:12px;font-family:ui-monospace,Consolas,monospace;color:var(--muted);background:var(--panel);padding:2px 8px;border-radius:4px;display:inline-block;border:1px solid var(--line)}
+.guide-step .step-run{padding:6px 14px;border:1px solid var(--accent);border-radius:var(--radius-sm);background:var(--accent);color:#fff;cursor:pointer;font:inherit;font-size:13px;font-weight:500;flex-shrink:0;transition:all 0.15s}
+.guide-step .step-run:hover:not(:disabled){background:var(--accent-hover);border-color:var(--accent-hover)}
+.guide-step .step-run:disabled{opacity:0.4;cursor:not-allowed}
+.guide-section-title{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);padding:8px 0 4px;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px}
+.guide-section-title .arrow{transition:transform 0.2s;font-size:10px}
+.guide-section-title.open .arrow{transform:rotate(90deg)}
+.guide-section-body{display:none;padding:4px 0 8px}
+.guide-section-body.open{display:block}
+.guide-readme-tip{font-size:13px;color:var(--muted);padding:10px 14px;background:var(--bg);border:1px solid var(--line);border-radius:var(--radius-sm);margin-bottom:8px;line-height:1.5}
+.guide-readme-tip strong{color:var(--text)}
+
+/* Group sections */
+.group-toggle{display:flex;align-items:center;gap:8px;padding:8px 0;cursor:pointer;color:var(--muted);font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;user-select:none;transition:color 0.15s}
+.group-toggle:hover{color:var(--text)}
+.group-toggle .arrow{transition:transform 0.2s;font-size:10px}
+.group-toggle.open .arrow{transform:rotate(90deg)}
+.group-body{display:none;padding:4px 0 8px}
+.group-body.open{display:block}
+
+/* Collapsible sections */
+.card.collapsible .card-body{max-height:0;overflow:hidden;transition:max-height 0.3s ease,opacity 0.3s ease;opacity:0}
+.card.collapsible.open .card-body{max-height:2000px;opacity:1}
+.card h2 .toggle{margin-left:auto;cursor:pointer;opacity:0.5;transition:opacity 0.2s,transform 0.3s;font-size:12px;user-select:none}
+.card h2 .toggle:hover{opacity:1}
+.card.collapsible .toggle{transform:rotate(-90deg)}
+.card.collapsible.open .toggle{transform:rotate(0deg)}
+
+/* Rows and buttons */
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+button.b{padding:9px 16px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--panel);color:var(--text);cursor:pointer;font:inherit;font-weight:500;transition:all 0.15s}
+button.b:hover:not(:disabled){border-color:var(--accent);color:var(--accent);background:rgba(79,70,229,0.04)}
+button.b.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+button.b.pri:hover:not(:disabled){background:var(--accent-hover);border-color:var(--accent-hover)}
+button.b:disabled{opacity:0.4;cursor:not-allowed}
+
+/* Log */
+#log{background:var(--log);color:var(--logt);font:13px/1.6 ui-monospace,Consolas,monospace;padding:16px;border-radius:var(--radius-sm);height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+#log::-webkit-scrollbar{width:6px}
+#log::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+
+/* Progress bar */
+.progress-container{width:100%;height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:8px}
+.progress-bar{height:100%;background:var(--accent);border-radius:3px;transition:width 0.3s ease;width:0%}
+.progress-text{font-size:12px;color:var(--muted);margin-top:4px;text-align:right}
+
+/* History */
+.hist{display:flex;gap:10px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer;border-radius:var(--radius-sm);transition:background 0.15s;margin-bottom:4px}
+.hist:hover{background:var(--bg)}.hist:last-child{border:0}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--muted);flex-shrink:0}
+.dot.completed{background:var(--ok)}.dot.failed{background:var(--bad)}.dot.running{background:var(--accent);animation:p 1s infinite}
+@keyframes p{50%{opacity:0.3}}
+
+/* Chat */
+#chat{max-height:240px;overflow:auto;margin-bottom:12px;padding:4px}
+.msg{padding:10px 14px;border-radius:var(--radius-sm);margin:6px 0;white-space:pre-wrap;line-height:1.5}
+.msg.u{background:var(--accent);color:#fff;margin-left:40px}
+
+/* Settings */
+.settings-section{margin-bottom:16px}
+.settings-section h3{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin:0 0 10px;display:flex;align-items:center;gap:6px}
+.settings-row{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);margin-bottom:6px;transition:all 0.15s}
+.settings-row:hover{border-color:var(--accent)}
+.settings-row label{font-size:14px;font-weight:500;cursor:pointer;flex:1}
+.settings-row .setting-desc{font-size:12px;color:var(--muted);margin-top:2px}
+.settings-row input[type="checkbox"]{width:18px;height:18px;cursor:pointer;accent-color:var(--accent)}
+.settings-row input[type="number"],.settings-row select{width:auto;min-width:100px;padding:6px 10px;font-size:13px}
+.settings-actions{display:flex;gap:8px;margin-top:12px}
+
+/* Security Report */
+.security-report{display:flex;flex-direction:column;gap:14px}
+.security-header{text-align:center;padding:16px;border-radius:var(--radius-sm);border:1px solid var(--line)}
+.security-header.clean{background:rgba(5,150,105,0.08);border-color:var(--ok)}
+.security-header.low{background:rgba(34,197,94,0.08);border-color:#22c55e}
+.security-header.medium{background:rgba(234,179,8,0.08);border-color:#eab308}
+.security-header.high{background:rgba(249,115,22,0.08);border-color:#f97316}
+.security-header.critical{background:rgba(220,38,38,0.08);border-color:var(--bad)}
+.security-header h3{margin:0 0 6px;font-size:18px;font-weight:700}
+.security-header .risk-score{font-size:32px;font-weight:800;margin:4px 0}
+.security-header .risk-level{font-size:14px;font-weight:600}
+.security-header .scan-meta{font-size:12px;color:var(--muted);margin-top:6px}
+.security-categories{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}
+.security-cat{padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);display:flex;align-items:center;gap:8px}
+.security-cat .cat-icon{font-size:18px}
+.security-cat .cat-info{flex:1}
+.security-cat .cat-name{font-size:12px;color:var(--muted);font-weight:500}
+.security-cat .cat-count{font-size:16px;font-weight:700}
+.security-cat .cat-severity{font-size:10px;padding:2px 6px;border-radius:99px;font-weight:600}
+.security-cat .cat-severity.critical{background:rgba(220,38,38,0.15);color:var(--bad)}
+.security-cat .cat-severity.high{background:rgba(249,115,22,0.15);color:#f97316}
+.security-cat .cat-severity.medium{background:rgba(234,179,8,0.15);color:#eab308}
+.security-cat .cat-severity.low{background:rgba(34,197,94,0.15);color:#22c55e}
+.security-recs{display:flex;flex-direction:column;gap:6px}
+.security-rec{padding:10px 12px;border-radius:var(--radius-sm);border-left:3px solid var(--line);background:var(--bg);font-size:13px;line-height:1.5}
+.security-rec.critical{border-left-color:var(--bad);background:rgba(220,38,38,0.04)}
+.security-rec.high{border-left-color:#f97316;background:rgba(249,115,22,0.04)}
+.security-rec.medium{border-left-color:#eab308;background:rgba(234,179,8,0.04)}
+.security-rec.low{border-left-color:#22c55e;background:rgba(34,197,94,0.04)}
+.security-findings{max-height:300px;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.security-finding{padding:8px 10px;border-bottom:1px solid var(--line);font-size:12px;font-family:ui-monospace,Consolas,monospace}
+.security-finding:last-child{border-bottom:none}
+.security-finding .finding-rule{font-weight:700;color:var(--accent)}
+.security-finding .finding-file{color:var(--muted)}
+.security-finding .finding-severity{font-weight:600;padding:1px 6px;border-radius:3px;font-size:10px}
+.security-finding .finding-severity.critical{background:rgba(220,38,38,0.15);color:var(--bad)}
+.security-finding .finding-severity.high{background:rgba(249,115,22,0.15);color:#f97316}
+.security-finding .finding-severity.medium{background:rgba(234,179,8,0.15);color:#eab308}
+.security-finding .finding-severity.low{background:rgba(34,197,94,0.15);color:#22c55e}
+.security-scan-btn{width:100%;padding:14px;border:2px dashed var(--line);border-radius:var(--radius-sm);background:transparent;color:var(--text);cursor:pointer;font:inherit;font-size:15px;font-weight:600;transition:all 0.2s;display:flex;align-items:center;justify-content:center;gap:8px}
+.security-scan-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(79,70,229,0.04)}
+.security-scan-btn:disabled{opacity:0.4;cursor:not-allowed}
+.security-malware-status{padding:10px 12px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;text-align:center}
+.security-malware-status.clean{background:rgba(5,150,105,0.08);color:var(--ok);border:1px solid var(--ok)}
+.security-malware-status.threats{background:rgba(220,38,38,0.08);color:var(--bad);border:1px solid var(--bad)}
+.security-malware-status.error{background:rgba(234,179,8,0.08);color:#eab308;border:1px solid #eab308}
+.security-malware-status.unavailable{background:var(--bg);color:var(--muted);border:1px solid var(--line)}
+.msg.a{border:1px solid var(--line);background:var(--bg);margin-right:40px}
+
+/* Toast */
+#toast{position:fixed;right:20px;bottom:20px;background:var(--text);color:var(--bg);padding:12px 18px;border-radius:var(--radius-sm);opacity:0;transition:opacity 0.25s,transform 0.25s;pointer-events:none;max-width:420px;font-weight:500;box-shadow:var(--shadow-lg);transform:translateY(8px);z-index:1000}
+#toast.show{opacity:1;transform:translateY(0)}
+#approve{border:1px solid var(--line);border-radius:var(--radius-sm);padding:20px;max-width:640px;width:90%;background:var(--bg);color:var(--text)}
+#safetyModal{border:1px solid var(--line);border-radius:var(--radius-sm);padding:20px;max-width:520px;width:90%;background:var(--bg);color:var(--text)}
+#fileWatchReminder{border:1px solid var(--line);border-radius:var(--radius-sm);padding:20px;max-width:480px;width:90%;background:var(--bg);color:var(--text)}
+#fileWatchBanner{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;padding:10px 14px;border:1px solid var(--warnc);border-radius:var(--radius-sm);background:var(--panel);color:var(--text)}
+#fileWatchBanner[hidden]{display:none}
+#fileWatchBanner .msg{flex:1;min-width:220px}
+#safetyModal .folder{font-family:ui-monospace,Consolas,monospace;font-size:13px;word-break:break-all;margin:6px 0 12px}
+#approve pre{white-space:pre-wrap;word-break:break-all;background:rgba(0,0,0,0.06);padding:10px;border-radius:6px;font-size:12px}
+#statusbar{position:fixed;left:0;right:0;bottom:0;font-size:12px;padding:4px 12px;border-top:1px solid var(--line);background:var(--bg);color:var(--muted);z-index:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body{padding-bottom:26px}
+
+/* Utility */
 .muted{color:var(--muted)}.warn{color:var(--bad)}
-@media(max-width:760px){body{grid-template-columns:1fr;grid-template-rows:auto auto 1fr;height:auto}header{grid-column:1}aside{max-height:240px}}
+
+/* Empty state */
+.empty-state{text-align:center;padding:40px 20px;color:var(--muted)}
+.empty-state .icon{font-size:48px;margin-bottom:12px;opacity:0.5}
+.empty-state p{margin:0;font-size:15px}
+
+/* Responsive */
+@media(max-width:900px){
+  body{grid-template-columns:1fr;grid-template-rows:auto auto 1fr;height:auto}
+  header{grid-column:1}
+  aside{max-height:300px;border-right:none;border-bottom:1px solid var(--line)}
+  main{padding:16px}
+}
+/* ===== 2026 refresh: calm dark theme, system fonts, even spacing ===== */
+:root,:root[data-theme=dark]{--bg:#0e1116;--panel:#161b22;--panel2:#1c222b;--text:#e6e9ef;--muted:#8b95a5;--line:#262d38;
+  --accent:#6d8cff;--accent-hover:#5a79f0;--ok:#3fb950;--bad:#f85149;--warnc:#d29922;--log:#0b0e13;--logt:#c9d1d9;
+  --shadow:none;--shadow-lg:none;--radius:12px;--radius-sm:8px;color-scheme:dark}
+:root[data-theme=light]{--bg:#f5f7fa;--panel:#fff;--panel2:#f0f3f7;--text:#1b1f24;--muted:#5f6b7a;--line:#dde3ea;
+  --accent:#3b5bdb;--accent-hover:#2f4bc0;--ok:#1a7f37;--bad:#cf222e;--warnc:#9a6700;--log:#0f1419;--logt:#d6dde6;color-scheme:light}
+body{font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;grid-template-columns:300px 1fr}
+header{padding:12px 20px;gap:10px;box-shadow:none}
+header h1{font-size:17px;margin:0;font-weight:650;letter-spacing:-0.01em}
+.sp{flex:1}
+.b{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--panel2);color:var(--text);font:inherit;font-size:13px;cursor:pointer;transition:border-color .15s,background .15s}
+.b:hover:not(:disabled){border-color:var(--accent)}
+.b:disabled{opacity:.45;cursor:not-allowed}
+.b.pri{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.b.pri:hover:not(:disabled){background:var(--accent-hover)}
+.b.big{padding:10px 18px;font-size:14px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+main{padding:20px 24px 40px;gap:16px;max-width:1100px}
+.card{padding:18px 20px;box-shadow:none}
+.card:hover{box-shadow:none}
+.card h2{font-size:12px;margin:0 0 12px;color:var(--muted)}
+.section-label{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:8px 2px -6px}
+.muted{color:var(--muted)}
+#title{font-size:16px;font-weight:600;word-break:break-all}
+.hint{font-size:13px;color:var(--muted);margin-top:6px}
+/* option rows (recommended / advanced) */
+.opt{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--panel2);margin-bottom:8px}
+.opt input[type=checkbox]{width:16px;height:16px;margin-top:3px;flex:none;accent-color:var(--accent)}
+.opt .txt{flex:1;min-width:0}.opt .name{font-weight:600}.opt .desc{font-size:12.5px;color:var(--muted)}
+.opt code{font:12px ui-monospace,Consolas,monospace;color:var(--muted)}
+.opt.running{border-color:var(--accent)}.opt.done{border-color:var(--ok)}.opt.failed{border-color:var(--bad)}
+#guideCard h2{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+#guideHeadline{font-size:16px;font-weight:650;margin:0 0 4px}
+#guideDetail{font-size:14px;color:var(--text)}
+#guideAfter{font-size:13px;color:var(--muted);margin-top:6px}
+.opt .state{font-size:12px;color:var(--muted);white-space:nowrap}
+details.more{border:1px solid var(--line);border-radius:var(--radius-sm);padding:0 12px;margin-top:12px;background:var(--panel)}
+details.more>summary{cursor:pointer;padding:10px 0;font-weight:600;color:var(--muted);list-style:none}
+details.more>summary::before{content:'▸ ';}details.more[open]>summary::before{content:'▾ '}
+details.more[open]{padding-bottom:10px}
+.subcard{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
+.subcard h3{font-size:13px;margin:0 0 8px}
+#log{min-height:120px;max-height:320px}
+#plist .proj{padding:10px 12px}
 </style>
 </head>
 <body>
 <header>
-  <h1>🛠️ Setup Manager</h1><span id="ver" class="pill"></span><span id="root" class="pill" title="Allowed projects root"></span>
-  <span class="sp"></span><span id="ai" class="pill">AI: …</span><button class="b" id="doctor">System check</button>
+  <h1>🛠️ Setup Manager</h1><span id="ver" class="pill"></span>
+  <span class="sp"></span>
+  <span id="root" class="pill" title="The folder Setup Manager is allowed to work in"></span>
+  <span id="ai" class="pill" title="Local AI (Ollama) - click to check again">AI: …</span>
+  <button class="b" id="theme" title="Switch light / dark">🌓</button>
+  <button class="b" id="doctor" title="Check which tools are installed on this PC">🩺 System check</button>
 </header>
 <aside>
-  <div class="box"><input id="q" placeholder="Search projects…  (press / )" autocomplete="off"></div>
+  <div class="box"><input id="q" placeholder="Type a name if you don't know the folder" autocomplete="off">
+    <p id="lookline" class="hint">Type a program name. I'll look in the folders I know.</p>
+    <div id="where"></div></div>
   <div id="plist"></div>
-  <div class="box"><input id="manual" placeholder="Or paste a project path" spellcheck="false"><div class="row" style="margin-top:6px"><button class="b" id="open">Open path</button><button class="b" id="refresh">↻ Refresh</button></div></div>
+  <div class="box"><input id="manual" placeholder="Or paste a project path" spellcheck="false">
+    <div class="row" style="margin-top:8px"><button class="b" id="open">Open path</button><button class="b" id="browse" title="Pick a folder on this PC">📂 Browse…</button><button class="b" id="refresh" title="Reload the list">↻</button></div>
+    <div class="row" style="margin-top:8px"><button class="b" id="setroot" title="Use the path above as the folder that holds your projects">Set as projects root</button></div></div>
 </aside>
 <main>
-  <div class="card" id="head"><h2>Project</h2><div id="title" class="muted">Pick a project from the list.</div><div id="types" style="margin-top:6px"></div></div>
-  <div class="card"><h2>Actions</h2><div class="row" id="actions"></div><div class="row" id="launch" style="margin-top:10px"></div></div>
+  <div id="fileWatchBanner" role="status" hidden><span class="msg">⏱️ File watch is running — it checks every 8 seconds and can slow down your PC. Stop it when you're done.</span><button class="b" id="fileWatchBannerStop" type="button">Stop watching</button></div>
+  <div class="section-label">Project</div>
+  <div class="card" id="head">
+    <div id="title" class="empty-state"><div class="icon">📂</div><p>Pick a project from the list to get started.</p></div>
+    <div id="types" style="margin-top:8px"></div>
+    <div id="subprojects" class="hint"></div>
+    <div class="row" style="margin-top:12px"><button class="b" id="explorer" disabled>📂 Open in Explorer</button>
+      <select id="candidate" style="width:auto;min-width:200px;display:none"></select><button class="b" id="runapp" style="display:none">▶ Run</button></div>
+    <div id="runHint" class="hint"></div>
+  </div>
+
+  <div class="section-label">Guide</div>
+  <div class="card" id="guideCard">
+    <h2>What to do next <span id="guideSource" class="muted" style="text-transform:none;letter-spacing:0;font-weight:500"></span></h2>
+    <div id="guideHeadline">Pick a project to get a recommendation.</div>
+    <div id="guideDetail" class="hint"></div>
+    <div id="guideAfter"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="b pri" id="guideDo" disabled>Do this</button>
+      <button class="b" id="guideAsk" disabled title="Ask the local model about this step">Explain with Ollama</button>
+    </div>
+  </div>
+
+  <div class="section-label">Setup</div>
+  <div class="card" id="setupCard">
+    <h2>Recommended</h2>
+    <div id="recommended" class="muted">Select a project first.</div>
+    <div class="row" style="margin-top:6px"><button class="b pri big" id="runRecommended" disabled>✨ Set up recommended</button><span id="recState" class="muted"></span></div>
+    <details class="more" id="advanced"><summary>Advanced options</summary><div id="advancedBody"></div></details>
+  </div>
+
+  <div class="section-label">Doctor</div>
+  <div class="card" id="doctorCard">
+    <div class="row"><button class="b" id="checkDeps">🔍 Check dependencies</button><button class="b" id="repairs">🩺 Doctor repairs</button><button class="b" id="diagnose">🧾 Full diagnosis</button></div>
+    <div class="hint">Finds what is missing or broken. Repairs always ask before changing anything.</div>
+    <div class="subcard"><h3>🔧 Fix dependencies</h3>
+      <div class="row"><button class="b" id="depsDiagnoseBtn">🔍 Diagnose</button><button class="b pri" id="depsFixBtn" disabled>🔧 Fix All</button></div>
+      <div id="depsResults" style="margin-top:12px"></div></div>
+    <div class="subcard"><h3>🛡️ Security scan</h3><div id="securityBody"><button class="security-scan-btn" id="securityScanBtn">🔍 Scan this project</button></div></div>
+  </div>
+
+  <div class="section-label">Protection</div>
+  <div class="card" id="fileWatchCard">
+    <h2>Sneaky file watch</h2>
+    <div class="hint">Off until you start it, so it uses no CPU otherwise. While it runs, the first look lists files already in Downloads, on the Desktop, or in Startup that can run a program. After that it warns when a new one shows up, or when a program starts from there. It checks every 8 seconds, which can slow down your PC, so stop it when you're done. It also stops by itself when this page is closed or hidden for about a minute, and after a time limit. Windows Defender still blocks known threats.</div>
+    <div class="row" style="margin-top:8px"><button class="b pri" id="fileWatchToggle" type="button">Start watching</button></div>
+    <div id="fileWatchStatus" class="hint" style="margin-top:8px">Checking…</div>
+    <div id="fileWatchAlerts" role="status" aria-live="assertive" style="margin-top:12px"></div>
+  </div>
+
+  <div class="section-label">Privacy</div>
+  <div class="card" id="privacyCard">
+    <h2>Is this PC being watched?</h2>
+    <div class="hint">Looks on this computer for known tracking programs and remote-control tools. It does not search for a person, and it cannot see an app that lives only on a phone.</div>
+    <div class="row" style="margin-top:8px"><button class="b" id="privacyBtn">Check this PC</button></div>
+    <div id="privacyResults" style="margin-top:12px"></div>
+  </div>
+
   <div class="card"><h2>Output <span id="runlbl" class="muted"></span></h2>
+    <div id="progressWrap" style="display:none"><div class="progress-container"><div id="progressBar" class="progress-bar"></div></div><div id="progressText" class="progress-text"></div></div>
     <div id="log" aria-live="polite" tabindex="0">Nothing running yet.</div>
-    <div class="row" style="margin-top:8px"><button class="b" id="cancel" disabled>🛑 Cancel task</button><button class="b" id="copy">Copy</button><button class="b" id="dl">Download</button><button class="b" id="clear">Clear</button></div></div>
-  <div class="card"><h2>Recent tasks</h2><div id="hist" class="muted">None yet.</div></div>
-  <div class="card"><h2>Ask the AI about this project</h2><div id="chat"></div>
-    <div class="row"><input id="msg" placeholder="e.g. How do I run this?" style="flex:1"><button class="b pri" id="send">Ask</button></div></div>
-  <div class="card"><h2>Custom command</h2><div class="row"><input id="cmd" placeholder="e.g. git status" style="flex:1" spellcheck="false"><button class="b" id="runcmd">Run…</button></div>
-    <div class="muted" style="margin-top:6px">Runs inside the selected project only. Shell features (pipes, &&) are off unless enabled on the server.</div></div>
+    <div class="row" style="margin-top:12px"><button class="b" id="cancel" disabled>🛑 Cancel</button><button class="b" id="popout">Pop out</button><label class="hint" style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="popoutAuto"> Own window when something runs</label><button class="b" id="copy">📋 Copy</button><button class="b" id="dl">💾 Download</button><button class="b" id="clear">🗑️ Clear</button></div></div>
+
+  <div class="section-label">AI</div>
+  <div class="card" id="aiCard"><h2>Ask the AI <span class="muted" style="text-transform:none;letter-spacing:0">— runs on this PC, no credits</span></h2><div id="chat"></div>
+    <div class="row"><input id="msg" placeholder="e.g. How do I run this?" style="flex:1"><button class="b pri" id="send">Ask</button></div>
+    <div class="muted" style="font-size:12px;margin-top:6px">The AI only suggests. Nothing it says runs unless you click. The Run box and AI suggestions are checked for risky commands; the project's own scripts are not.</div></div>
+
+  <details class="more" id="moreCard"><summary>More tools</summary>
+    <div class="subcard"><h3>📜 Recent tasks</h3><div id="hist" class="muted">None yet.</div></div>
+    <div class="subcard"><h3>🛠️ Utilities</h3><div id="utilities" class="muted">Select a project first.</div></div>
+    <div class="subcard"><h3>⌨️ Custom command</h3><div class="row"><input id="cmd" placeholder="e.g. git status" style="flex:1" spellcheck="false"><button class="b" id="runcmd">Run…</button></div>
+      <div class="hint">Runs inside the selected project only. Shell features (pipes, &&) are off unless enabled on the server.</div></div>
+    <div class="subcard"><h3>🔎 Search online</h3><div class="row"><input id="searchInput" placeholder="Search for a package or documentation…" style="flex:1" spellcheck="false"><button class="b" id="searchBtn">Search</button></div>
+      <div id="searchResults" style="margin-top:12px"></div><div class="hint">Searches safe sources: PyPI, npm, crates.io, and official documentation.</div></div>
+    <div class="subcard"><h3>⚙️ Settings</h3><div id="settingsBody"></div></div>
+  </details>
 </main>
 <div id="toast"></div>
-<script>
-const TOKEN=document.querySelector('meta[name=sm-token]').content;
-const $=id=>document.getElementById(id);let cur=null,info=null,ws=null,poll=null,history=[],taskId=null,curLabel='';
-function notify(st){if(document.hidden&&'Notification' in window&&Notification.permission==='granted')new Notification('Setup Manager',{body:curLabel+': '+st})}
-const toast=(t,bad)=>{const e=$('toast');e.textContent=t;e.style.background=bad?'var(--bad)':'';e.classList.add('show');setTimeout(()=>e.classList.remove('show'),3200)};
-async function api(path,opt={}){
-  const o={method:opt.method||'GET',headers:{'X-Setup-Token':TOKEN}};
-  if(opt.body){o.headers['Content-Type']='application/json';o.body=JSON.stringify(opt.body)}
-  const r=await fetch(path,o);let d=null;try{d=await r.json()}catch{}
-  if(!r.ok){throw new Error((d&&(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail)))||('HTTP '+r.status))}
-  return d}
-const qs=o=>'?'+new URLSearchParams(o);
-const badge=t=>{const s=document.createElement('span');s.className='badge '+t;s.textContent=t;return s};
-function log(text,reset){const l=$('log');const atBottom=l.scrollHeight-l.scrollTop-l.clientHeight<40;if(reset)l.textContent='';l.textContent+=text+'\n';if(reset||atBottom)l.scrollTop=l.scrollHeight}
-
-async function loadProjects(){
-  try{const list=await api('/projects'+qs({q:$('q').value}));const box=$('plist');box.replaceChildren();
-    if(!list.length){box.innerHTML='<div class="muted" style="padding:10px">No projects found.</div>'}
-    list.forEach(p=>{const b=document.createElement('button');b.className='proj'+(cur===p.path?' sel':'');
-      const n=document.createElement('b');n.textContent=p.name;b.append(n);const s=document.createElement('small');
-      (p.types.length?p.types:['unknown']).forEach(t=>s.append(badge(t)));b.append(s);b.onclick=()=>select(p.path);box.append(b)})
-  }catch(e){toast(e.message,1)}}
-async function select(path){
-  cur=path;$('title').textContent=path;$('types').replaceChildren();$('actions').replaceChildren();$('launch').replaceChildren();loadProjects();
-  try{info=await api('/analyze',{method:'POST',body:{path}})}catch(e){info=null;toast(e.message,1);return}
-  (info.detected||[]).forEach(t=>$('types').append(badge(t)));if(!(info.detected||[]).length)$('types').textContent='No known project type detected';
-  buildActions()}
-function act(label,fn,pri){const b=document.createElement('button');b.className='b'+(pri?' pri':'');b.textContent=label;b.onclick=async()=>{b.disabled=true;try{await fn()}catch(e){toast(e.message,1);log('❌ '+e.message)}b.disabled=false};$('actions').append(b)}
-function buildActions(){
-  const types=info.detected||[];
-  types.filter(t=>['python','nodejs','dotnet'].includes(t)).forEach(t=>{
-    act('Install '+t+' deps',()=>start('/task/install-dependencies/'+t+qs({path:cur}),'Install '+t),1);
-    act('Set up '+t,()=>start('/task/setup/'+t+qs({path:cur}),'Set up '+t))});
-  act('Quality checks',()=>start('/task/checks'+qs({project_type:'auto',path:cur}),'Quality checks'));
-  act('Check dependencies',async()=>{log('🔍 Looking for missing dependencies and files…',1);const r=await api('/doctor/dependencies',{method:'POST',body:{path:cur}});
-    const mark=f=>f.status==='ok'?'✅ ':f.status==='warn'?'⚠️ ':'❌ ';
-    const lines=(r.findings||[]).map(f=>mark(f)+f.title+(f.detail?'  — '+f.detail:'')+(f.fix?'\n     → '+f.fix:''));
-    log(lines.join('\n')||'Nothing to report.',1)});
-  if(types.includes('python'))act('Install missing packages',()=>start('/task/install-missing',null,{path:cur}));
-  act('Outdated packages',()=>start('/task/outdated',null,{path:cur}));
-  act('Generate .env',()=>start('/task/generate-env',null,{path:cur}));
-  act('Git hooks',()=>start('/task/setup-hooks',null,{path:cur}));
-  act('Security scan',async()=>{log('🔍 Scanning…',1);const r=await api('/security-scan',{method:'POST',body:{path:cur}});
-    log('Files scanned: '+r.files_scanned+'\nFindings: '+(r.findings||[]).length+'\nMalware scan: '+((r.malware_scan||{}).status||'n/a'));
-    (r.findings||[]).slice(0,40).forEach(f=>log(' • '+Object.values(f).join(' | ')))});
-  act('Diagnose',async()=>{const r=await api('/diagnose',{method:'POST',body:{path:cur}});log(JSON.stringify(r,null,2),1)});
-  (info.candidates||[]).forEach((c,i)=>{const b=document.createElement('button');b.className='b';b.textContent='▶ '+c.label;
-    b.onclick=()=>{if(confirm('Run on this machine?\n\n'+(c.command||[]).join(' ')+'\n\nin '+cur))start('/task/launch',null,{path:cur,candidate_index:i,run_mode:'host'}).catch(e=>toast(e.message,1))};$('launch').append(b)})}
-
-async function start(url,label,body){
-  if('Notification' in window&&Notification.permission==='default')Notification.requestPermission();
-  const r=await api(url,{method:'POST',body});label=label||url;log('▶ '+label+'…',1);follow(r.task_id,label);refreshHistory()}
-function follow(id,label){
-  if(ws)ws.close();clearInterval(poll);taskId=id;curLabel=label;$('cancel').disabled=false;$('runlbl').textContent='— '+label;
-  const proto=location.protocol==='https:'?'wss':'ws';ws=new WebSocket(proto+'://'+location.host+'/ws/logs/'+id+'?token='+encodeURIComponent(TOKEN));
-  ws.onmessage=e=>{if(e.data.startsWith('[status] ')){const st=e.data.slice(9);done();notify(st);toast(st==='completed'?'✅ Finished':st==='cancelled'?'🛑 Cancelled':'❌ Failed',st==='failed');refreshHistory()}else log(e.data)};
-  ws.onerror=()=>{poll=setInterval(async()=>{try{const t=await api('/task/'+id);$('log').textContent=t.logs.join('\n');if(t.status!=='running'){clearInterval(poll);done();refreshHistory()}}catch{clearInterval(poll)}},1500)}}
-function done(){taskId=null;$('cancel').disabled=true}
-async function refreshHistory(){
-  try{history=await api('/tasks');const h=$('hist');h.replaceChildren();if(!history.length){h.textContent='None yet.';return}
-    history.slice(0,10).forEach(t=>{const d=document.createElement('div');d.className='hist';const dot=document.createElement('span');dot.className='dot '+t.status;
-      const s=document.createElement('span');s.textContent=t.label||t.task_id.slice(0,8);const m=document.createElement('span');m.className='muted';m.style.marginLeft='auto';m.textContent=new Date(t.created_at).toLocaleTimeString();
-      d.append(dot,s,m);d.onclick=async()=>{const r=await api('/task/'+t.task_id+'/logs');log(r.logs.join('\n'),1);$('runlbl').textContent='— '+(t.label||'')};h.append(d)})}catch{}}
-
-$('send').onclick=async()=>{const m=$('msg').value.trim();if(!m)return;$('msg').value='';
-  const add=(c,t)=>{const d=document.createElement('div');d.className='msg '+c;d.textContent=t;$('chat').append(d);$('chat').scrollTop=1e9;return d};
-  add('u',m);const w=add('a','…');try{const r=await api('/ai/chat',{method:'POST',body:{message:m,path:cur,include_context:!!cur}});w.textContent=r.reply||JSON.stringify(r)}catch(e){w.textContent='⚠ '+e.message}};
-$('msg').addEventListener('keydown',e=>{if(e.key==='Enter')$('send').click()});
-$('runcmd').onclick=()=>{const c=$('cmd').value.trim();if(!cur)return toast('Select a project first',1);if(!c)return;
-  if(confirm('Run this command in '+cur+'?\n\n'+c))start('/task/custom',c,{command:c,cwd:cur,confirm:true}).catch(e=>toast(e.message,1))};
-$('doctor').onclick=async()=>{const r=await api('/system/doctor');log(Object.entries(r.tools).map(([k,v])=>(v.status==='ready'?'✅ ':'❌ ')+k+(v.path?'  '+v.path:'  → '+v.url)).join('\n'),1)};
-$('cancel').onclick=async()=>{if(!taskId)return;try{await api('/task/'+taskId+'/cancel',{method:'POST'});toast('Cancelling…')}catch(e){toast(e.message,1)}};
-$('open').onclick=()=>{const p=$('manual').value.trim();if(p)select(p)};
-$('refresh').onclick=loadProjects;$('clear').onclick=()=>log('',1);
-$('copy').onclick=()=>navigator.clipboard.writeText($('log').textContent).then(()=>toast('Copied'));
-$('dl').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([$('log').textContent],{type:'text/plain'}));a.download='setup-manager-log.txt';a.click()};
-let t;$('q').oninput=()=>{clearTimeout(t);t=setTimeout(loadProjects,250)};
-addEventListener('keydown',e=>{if(e.key==='/'&&!/INPUT|TEXTAREA/.test(document.activeElement.tagName)){e.preventDefault();$('q').focus()}});
-(async()=>{try{const c=await api('/api/config');$('ver').textContent='v'+c.version;$('root').textContent='root: '+c.safe_root}catch(e){toast(e.message,1)}
-  try{const s=await api('/ai/status');const ok=s.available&&!s.message;$('ai').textContent='AI: '+(ok?'ready':s.available?'model missing':'offline');$('ai').title=s.message||'';$('ai').className='pill '+(ok?'ok':'bad')}catch{$('ai').textContent='AI: offline';$('ai').className='pill bad'}
-  loadProjects();refreshHistory()})();
-</script>
+<dialog id="approve"><h3 id="approveTitle">Approve?</h3><div class="muted">These are the exact commands that will run in <b id="approvePath"></b>:</div><pre id="approveCmds"></pre><div id="approveNotes" class="muted"></div>
+  <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="b" id="approveNo">Cancel</button><button class="b pri" id="approveYes">✅ Approve</button></div></dialog>
+<dialog id="safetyModal" aria-labelledby="safetyTitle"><h3 id="safetyTitle">🛡️ Want a safety scan first?</h3>
+  <div class="muted">You just opened:</div>
+  <div class="folder" id="safetyFolder"></div>
+  <p>This is a good time to scan the folder before you install or run anything from it. The scan is optional.</p>
+  <p>The scan is not bulletproof. It only looks for known warning signs, so it can miss new or well-hidden threats.</p>
+  <p>Commands typed in the Run box and AI suggestions are checked for risky patterns. The project's own scripts are not: Install, Launch, make targets and setup hooks run the project's code as it is. Only install or run projects you trust.</p>
+  <label class="muted"><input type="checkbox" id="safetyDontShow"> Don't show again for this folder</label>
+  <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="b" id="safetyLater" type="button">Not now</button><button class="b pri" id="safetyScan" type="button">Run safety scan now</button></div></dialog>
+<dialog id="fileWatchReminder" aria-labelledby="fileWatchReminderTitle"><h3 id="fileWatchReminderTitle">⏱️ File watch is still running</h3>
+  <p>It has been running for <span id="fileWatchReminderTime">30 minutes</span>. It checks every 8 seconds and can slow down your PC.</p>
+  <p>Stop it if you're done.</p>
+  <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="b" id="fileWatchKeep" type="button">Keep watching</button><button class="b pri" id="fileWatchReminderStop" type="button">Stop watching</button></div></dialog>
+<div id="statusbar">Starting…</div>
+<script src="/static/dashboard.js?v=filewatch3"></script>
 </body>
 </html>

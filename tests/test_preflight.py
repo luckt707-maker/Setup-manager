@@ -16,7 +16,7 @@ from core.executor import CommandExecutor  # noqa: E402
 
 
 def _client():
-    return TestClient(app, base_url="http://127.0.0.1", headers={"x-setup-token": webapp.API_TOKEN})
+    return TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000), headers={"x-setup-token": webapp.API_TOKEN})
 
 
 # --------------------------------------------------------------------------- #

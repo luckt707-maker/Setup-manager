@@ -8,7 +8,7 @@ from app import app
 
 def _client():
     # base_url must be an allowed host: TrustedHostMiddleware rejects "testserver".
-    return TestClient(app, base_url="http://127.0.0.1")
+    return TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
 
 
 def test_health():
@@ -65,6 +65,32 @@ def test_system_doctor_shape():
     tools = r.json()["tools"]
     assert "python" in tools
     assert set(tools["python"]) >= {"status", "path", "url"}
+    # No project is selected, so an absent tool is not reported as an error.
+    for info in tools.values():
+        assert info["status"] in {"ready", "not_needed"}
+
+
+def test_system_doctor_ignores_tools_the_project_does_not_need():
+    import app as webapp
+
+    project = _project_in_safe_root("doctor-python", {
+        "pyproject.toml": "[project]\nname = 'demo'\n",
+        "Dockerfile": "FROM python:3.12\n",
+        "go.mod": "module myproject\n\ngo 1.21\n",
+        "package.json": '{"dependencies":{"left-pad":"1.0.0"}}\n',
+    })
+    response = _client().get(
+        "/system/doctor",
+        params={"path": str(project)},
+        headers={"X-Setup-Token": webapp.API_TOKEN},
+    )
+    assert response.status_code == 200
+    tools = response.json()["tools"]
+    assert tools["python"]["needed"] is True
+    for name in ("node", "npm", "docker", "make"):
+        assert tools[name]["needed"] is False
+        assert tools[name]["status"] != "missing"
+    assert "go" not in tools
 
 
 def test_config_endpoint():
@@ -123,7 +149,7 @@ def test_doctor_dependencies_refuses_a_path_outside_the_safe_root():
 
     r = _client().post(
         "/doctor/dependencies",
-        json={"path": "C:\Windows"},
+        json={"path": r"C:\Windows"},
         headers={"X-Setup-Token": webapp.API_TOKEN},
     )
 
@@ -151,7 +177,7 @@ def test_install_missing_packages_refuses_a_path_outside_the_safe_root():
 
     r = _client().post(
         "/task/install-missing",
-        json={"path": "C:\Windows"},
+        json={"path": r"C:\Windows"},
         headers={"X-Setup-Token": webapp.API_TOKEN},
     )
 

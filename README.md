@@ -1,187 +1,144 @@
-# Setup Manager v2
+# Setup Manager
 
-Auto-detects and sets up development environments on Windows, with a web
-dashboard, an interactive CLI and a "doctor" that explains why a build failed.
+Setup Manager helps you set up and run development projects on Windows. It
+opens a dashboard in your browser, can detect common project types, install
+what a project needs (after you approve the commands), scan a folder for
+known warning signs, and explain why a build failed.
 
-Supports Python, Node.js, C# (.NET), Ruby, Make, Git and Docker, plus QoL
-extensions (linters, formatters, type checkers, test frameworks, debuggers,
-profilers, security scanners).
+It supports Python, Node.js, C# (.NET), Ruby, Make, Git and Docker, plus
+common extras such as linters, formatters, type checkers and test runners.
+An optional AI panel can talk to a local Ollama model on your PC. Nothing
+is sent to a cloud AI service.
 
-## Quick start
+## Features
 
-```bat
-run.bat
-```
+- A web dashboard on this PC only, plus a terminal menu as a backup
+- Detects a project's language and missing tools or packages
+- Shows the exact install or repair commands and waits for your approval
+- A security scan that looks for known risky patterns, plus an optional
+  Microsoft Defender scan
+- Blocks risky commands in the Run box and in AI suggestions
+- A "doctor" that checks this PC and known build errors
+- Optional local AI help through Ollama
+- Optional file watch for unexpected new programs in a project folder
 
-That creates the virtual environment on first run, installs the dependencies
-and starts the dashboard on <http://127.0.0.1:8010>.
+## Requirements
 
-To run the interactive terminal UI instead:
+- Windows
+- Python 3, tested with Python 3.13
+- Optional: [Ollama](https://ollama.com) if you want the AI panel
+
+## Install
+
+1. Clone the repository, or download the zip from GitHub and unpack it.
+2. Open the folder and run `run.bat`.
+
+On the first run, `run.bat` creates a virtual environment in `venv\`,
+installs the packages from `requirements.txt`, and starts the dashboard.
+Later runs reuse that environment.
+
+To start the terminal menu instead of the dashboard:
 
 ```bat
 venv\Scripts\python.exe setup_manager.py
 ```
 
-## Ports
+You can also put a shortcut on your Desktop with `create_shortcut.py`.
 
-The dashboard prefers port 8010, but it does not insist on it:
+## First run
 
-- If 8010 is free, the dashboard uses it.
-- If 8010 is taken by something else, it moves up to the next free port in
-  the range (8010-8099 by default) and says so on startup.
-- If a Setup Manager is already running, a second start does not open a
-  second dashboard - it reports the address of the one that is already up.
+The dashboard prefers [http://127.0.0.1:8010](http://127.0.0.1:8010) and
+only listens on this computer. If 8010 is busy, it uses the next free port
+in the range 8010-8099 and says so in the `run.bat` window. If Setup
+Manager is already running, a second start opens the one that is already
+up instead of starting another.
 
-Wherever the dashboard ended up, it writes `logs/server.json` with its port,
-pid and URL, and removes that file when it stops. The CLI and the smoke
-test read it, so they always find the server wherever it went.
+Pick a project folder and use the dashboard to scan, install, or launch.
+Installs and repairs always show the commands first and wait for Approve.
 
-## Layout
+If you want the AI panel, start Ollama and pull a model, for example:
 
-```
-SetupManagerv2/
-  app.py               FastAPI application (the web dashboard and its API)
-  ollama_client.py     Client for the local Ollama server
-  setup_manager.py     Backwards-compatible entry point for the engine
-
-  core/                The engine
-    detector.py        ProjectDetector, QoLExtensionsRegistry
-    executor.py        CommandExecutor - runs commands, streams output, cancels
-    security.py        SecurityScanner - heuristic source review
-    setup.py           Setup - the per-ecosystem setup handlers
-    orchestrator.py    ProjectOrchestrator - headless analyse/diagnose
-    workspace.py       WorkspaceDetector, ProjectBootstrapper
-    cli.py             InteractiveCLI - the terminal UI
-    console.py         UTF-8 console fix (Windows consoles are cp1252)
-    server_state.py    Where the server is listening, and whether it is alive
-
-  doctor/              Diagnostics and repairs
-    knowledge_base.py  Known build failures: signature -> cause -> fix
-    diagnostics.py     Machine and build-output checks
-    repairs.py         The changes the doctor knows how to make
-    log_manager.py     History of doctor runs (logs/)
-    build_doctor.py    Runs a whole pass and writes a report (reports/)
-    easter_ggs.py      A very small hidden surprise. Harmless.
-
-  vscode/              VS Code integration
-    knowledge_base.py  Known VS Code problems and their fixes
-
-  knowledge/           Extra known-failure data, as JSON
-  logs/                Server and doctor logs
-  reports/             Doctor reports
-  static/              The dashboard's HTML, CSS and JavaScript
-  scripts/
-    smoke_test.py      End-to-end check against a running server
-  create_shortcut.py   Puts a "Setup Manager" shortcut on the Desktop
-  tests/               The test suite
+```bat
+ollama pull qwen2.5-coder:3b
 ```
 
-`core/`, `doctor/` and `ollama_client.py` use the standard library only, so the
-engine can be used without installing anything.
+The AI pill at the top of the dashboard says whether it is ready. If Ollama
+is not running, Setup Manager still works; the pill will say
+`AI offline - start Ollama`. Click the pill to check again.
 
-## The doctor
+## Projects folder (safe root)
 
-The doctor answers two questions.
+Setup Manager will only open project folders inside a safe root. The
+default is a `Projects` folder in your user profile. You can change it in
+the dashboard (**Set as projects root**), or with the
+`SETUP_MANAGER_SAFE_ROOT` environment variable.
 
-**Is this machine set up correctly?** `python -m doctor`
+`run.local.bat` is the local-only place to set that variable. It is listed
+in `.gitignore`, so it is not committed or uploaded. `run.bat` calls it
+when the file exists. Example `run.local.bat`:
 
-```
-🩺 DOCTOR REPORT
---------------------------------------------------
-ok: 13   warnings: 0   failures: 0
-```
-
-**Why did my build fail?** Capture the output and match it against the
-knowledge base:
-
-```python
-from doctor import diagnose_build_output
-
-for finding in diagnose_build_output(build_output):
-    print(finding.title, "->", finding.fix)
+```bat
+@echo off
+REM Personal settings for this PC. Not shared (see .gitignore).
+if not defined SETUP_MANAGER_SAFE_ROOT set SETUP_MANAGER_SAFE_ROOT=C:\Users\You\Projects
 ```
 
-The knowledge base lives in `doctor/knowledge_base.py`, and extra entries can
-be added as JSON files in `knowledge/`. Each entry is a signature that appears
-in the error text, with the cause and the fix:
-
-```json
-{
-  "EADDRINUSE": {
-    "name": "Port already in use",
-    "cause": "Another process is already listening on the port.",
-    "fix": "Stop the other process, or start on a different port"
-  }
-}
-```
-
-## Quality checks
-
-Running the quality checks (menu option 6 in the CLI, or **Quality checks** in
-the dashboard) reports one of three results per check:
-
-| Result | Meaning |
-|---|---|
-| `pass` | The tool ran and the check succeeded. |
-| `fail` | The tool ran and the check failed. |
-| `skip` | The tool is not installed, or the check had nothing to do. |
-
-A test runner that found no tests to run is a skip, not a failure. `pytest`
-and `python -m unittest discover` both exit with code 5 in that case, and
-exit code 1 when the tests genuinely fail - so a project that uses pytest
-does not get a red "unittest failed" for a suite it never had.
-
-## Configuration
-
-All settings are environment variables.
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `SETUP_MANAGER_HOST` | `127.0.0.1` | Interface the server binds to |
-| `SETUP_MANAGER_PORT` | unset | Pin the server to this port. Unset, it takes the first free port in the range below. |
-| `SETUP_MANAGER_PORT_RANGE` | `8010-8099` | The ports the dashboard may use, as `start-end`. |
-| `SETUP_MANAGER_TOKEN` | random per run | API token; sent as `X-Setup-Token` |
-| `SETUP_MANAGER_SAFE_ROOT` | `C:\dev` | The only folder the API may touch |
-| `SETUP_MANAGER_TASKS_DB` | `tasks.db` | Where task history is stored |
-| `SETUP_MANAGER_ALLOW_SHELL` | `0` | Allow arbitrary shell commands |
-| `SETUP_MANAGER_MAX_TASKS` | `4` | Concurrent background tasks |
-| `SETUP_MANAGER_OLLAMA_MODEL` | `qwen2.5-coder:7b` | Model used by the AI panel |
-| `SETUP_MANAGER_OLLAMA_ALLOWED_MODELS` | see `ollama_client.py` | Which models may be used |
-
-`SETUP_MANAGER_SAFE_ROOT` matters: every path the API is given is resolved and
-checked against it, so a request cannot reach outside the projects folder.
-
-## Security
-
-The API listens on localhost only and defends itself against the ways a
-browser on the same machine can be abused:
-
-- **Host allow-list** - blocks DNS-rebinding attacks.
-- **Per-session token** - every request needs `X-Setup-Token`, so another
-  website cannot drive the API.
-- **Origin check** - blocks cross-site requests and websockets.
-- **Path validation** - paths are resolved (symlinks, junctions, `..`) and
-  must land inside the safe root.
-- **Security headers and a CSP** on every response.
-
-Set `SETUP_MANAGER_TOKEN` explicitly if you want a stable token across
-restarts.
+A whole drive, your home folder itself, Windows, and Program Files are
+refused as the projects root.
 
 ## Tests
 
 ```bat
 venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-venv\Scripts\python.exe -m pytest
+venv\Scripts\python.exe -m pytest -q
 ```
 
-## The AI panel
+## Security
 
-The dashboard can ask a local Ollama model about the project you are working
-on. The model must be pulled first:
+In short:
 
-```bat
-ollama pull qwen2.5-coder:7b
-```
+- The server binds to `127.0.0.1` and refuses connections from other machines
+- API requests need a per-session token (`X-Setup-Token`)
+- Host and Origin headers are checked
+- Commands are not run through the system shell unless you turn that on
+- Risky commands are blocked
+- Project paths must stay inside the safe root
+- Microsoft Defender can scan a folder before installs or launches
 
-The dropdown only offers models that are both allowed by the configuration and
-actually installed on the machine.
+This is a safety net, not a guarantee. See [docs/SECURITY-NOTES.md](docs/SECURITY-NOTES.md)
+for the model, its limits, and how to report a problem.
+
+If something goes wrong, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+Changes in this release are listed in [CHANGELOG.md](CHANGELOG.md).
+
+## Configuration
+
+These are the main environment variables. You can set them in
+`run.local.bat`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SETUP_MANAGER_HOST` | `127.0.0.1` | Interface the server binds to |
+| `SETUP_MANAGER_PORT` | unset | Pin the server to this port. Unset, it takes the first free port in 8010-8099 |
+| `SETUP_MANAGER_PORT_RANGE` | `8010-8099` | Ports the dashboard may use, as `start-end` |
+| `SETUP_MANAGER_TOKEN` | random per run | API token, sent as `X-Setup-Token` |
+| `SETUP_MANAGER_SAFE_ROOT` | `Projects` in your user profile | The only folder the API may open as a project |
+| `SETUP_MANAGER_ALLOW_SHELL` | `0` | Allow arbitrary shell commands |
+| `SETUP_MANAGER_OLLAMA_MODEL` | `qwen2.5-coder:3b` when started from `run.bat` | Model used by the AI panel |
+| `SETUP_MANAGER_NOTIFY` | `0` | `1` turns on desktop toasts when a task finishes |
+
+## License
+
+Setup Manager is free software under the [MIT License](LICENSE). You can use,
+copy, change, and share it, including in your own projects, at no cost.
+
+Copyright (c) 2026 E. Guardado.
+
+This project was developed by E. Guardado with assistance from Grok Bot, and
+is shared so other people can set up their own tools the same way.
+
+## Dedication
+
+In memory of JPP, who gave me the strength and the push to go on.
+
+Thanks to Rock, for being a good critic. I couldn't have done it without you.

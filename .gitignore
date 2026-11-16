@@ -5,17 +5,19 @@ venv/
 # Python
 __pycache__/
 *.py[cod]
+*.pyc
 .pytest_cache/
 
 # Runtime state
 tasks.db
-tasks.db-shm
-tasks.db-wal
+tasks.db*
+*.db-wal
+*.db-shm
 logs/
 reports/
+.setup-manager/updates/
+*.log
 
-# Stray V8 crash logs
-isolate-*.log
-
-# Local overrides
+# Local overrides and secrets
 .env
+run.local.bat

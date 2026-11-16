@@ -76,9 +76,10 @@ def test_a_poetry_project_gets_its_dependencies(tmp_path):
     setup.setup_python()
 
     text = setup.executor.text()
+    install = setup.executor.commands[-1]
     assert "tomli" in text, text
     assert "requests" in text, text
-    assert "pytest" in text, text
+    assert not any(str(part).startswith("pytest") for part in install), install
 
 
 def test_a_poetry_caret_is_turned_into_a_pip_range(tmp_path):

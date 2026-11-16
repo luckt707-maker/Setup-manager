@@ -28,6 +28,18 @@ def test_detects_types():
     assert set(ProjectDetector(str(d)).detect()) >= {"python", "nodejs"}
 
 
+def test_a_python_child_can_print_an_emoji():
+    """Sherlock's welcome banner contains an emoji. cp1252 must not kill it."""
+    lines = []
+    ok = CommandExecutor.run(
+        [sys.executable, "-c", "print('\\U0001f40d')"],
+        callback=lines.append,
+        timeout=30,
+    )
+    assert ok, lines
+    assert any("\U0001f40d" in line for line in lines), lines
+
+
 def test_executor_streams_and_reports_failure():
     lines = []
     assert CommandExecutor.run([sys.executable, "-c", "print('hi')"], callback=lines.append)
@@ -82,6 +94,77 @@ def test_security_scan_flags_hardcoded_credentials():
     assert "SEC008" in rules
 
 
+def test_security_scan_ignores_ordinary_words():
+    """The words that flooded the Sherlock scan are not persistence or ciphers."""
+    d = _proj("words", {"notes.py": (
+        '"""search for usernames at social networks"""\n'
+        'print("that task is not real")\n'
+        'path = os.path.join(here, "../sherlock/resources/data.json")\n'
+        'raise ValueError("impossible...")\n'
+        'text = proc_out.decode()\n'
+    )})
+    rules = {f["rule"] for f in SecurityScanner.scan(d)["findings"]}
+    assert "BD002" not in rules
+    assert "FR004" not in rules
+    assert "OBF006" not in rules
+
+
+def test_security_scan_still_flags_real_persistence_and_ciphers():
+    d = _proj("real", {"bad.py": (
+        'import os\n'
+        'os.system("schtasks /create /tn x /tr calc.exe")\n'
+        'os.system("crontab -l")\n'
+        'os.system("at 14:00 malware.exe")\n'
+        'os.system("attrib +h secret.txt")\n'
+        'rot13("payload")\n'
+    )})
+    rules = {f["rule"] for f in SecurityScanner.scan(d)["findings"]}
+    assert {"BD002", "FR004", "OBF006"} <= rules
+
+
+def test_security_fix_switches_shell_true_on_lists_only():
+    d = _proj("shells", {"run.py": (
+        "import subprocess\n"
+        'subprocess.run(["py", "-m", "tool"], shell=True)\n'
+        'subprocess.check_output(f"py -m tool {args}", shell=True)\n'
+    )})
+    before = [f for f in SecurityScanner.scan(d)["findings"] if f["rule"] == "SEC007"]
+    assert len(before) == 2
+    assert sum(1 for f in before if f["fixable"]) == 1
+
+    result = SecurityScanner.apply_fixes(d)
+    text = (d / "run.py").read_text(encoding="utf-8")
+    assert 'subprocess.run(["py", "-m", "tool"], shell=False)' in text
+    assert 'shell=True' in text
+    remaining = [f for f in result["findings"] if f["rule"] == "SEC007"]
+    assert len(remaining) == 1
+    assert remaining[0]["fixable"] is False
+    assert result["fix_result"]["files_changed"] == 1
+
+
+def test_security_fix_endpoint_applies_safe_edits(monkeypatch):
+    d = _proj("api-fix", {"run.py": 'import subprocess\nsubprocess.run(["echo", "hi"], shell=True)\n'})
+    c, w = _client()
+    monkeypatch.setattr(w, "_validate_path", lambda path: str(d))
+    response = c.post(
+        "/security-scan/fix",
+        json={"path": str(d)},
+        headers={"X-Setup-Token": w.API_TOKEN},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["fix_result"]["files_changed"] == 1
+    assert body["fixable_count"] == 0
+    assert "shell=False" in (d / "run.py").read_text(encoding="utf-8")
+
+
+def test_security_page_offers_fix():
+    static = Path(__file__).resolve().parent.parent / "static"
+    html = (static / "index.html").read_text(encoding="utf-8") + (static / "dashboard.js").read_text(encoding="utf-8")
+    assert "Fix these" in html
+    assert "/security-scan/fix" in html
+
+
 def test_workspace_detector_finds_frontend_and_backend():
     root = _proj("ws", {})
     (root / "api").mkdir()
@@ -104,7 +187,7 @@ def test_workspace_detector_on_missing_folder_is_empty():
 def _client():
     from fastapi.testclient import TestClient
     import app as webapp
-    return TestClient(webapp.app, base_url="http://127.0.0.1"), webapp
+    return TestClient(webapp.app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)), webapp
 
 
 def test_api_requires_token():

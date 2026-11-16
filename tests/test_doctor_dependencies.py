@@ -93,10 +93,16 @@ def test_a_relative_import_whose_file_is_missing_is_reported(tmp_path):
 
 
 def test_a_missing_node_package_is_reported(tmp_path):
-    """package.json is the manifest, node_modules is what is there."""
+    """A project that actually runs JavaScript still reports a missing package."""
     project = _project(
         tmp_path,
-        {"package.json": json.dumps({"dependencies": {"lodash": "^4.17.0"}})},
+        {
+            "package.json": json.dumps({
+                "scripts": {"start": "node index.js"},
+                "dependencies": {"lodash": "^4.17.0"},
+            }),
+            "index.js": "console.log('hi')\n",
+        },
     )
     _venv(project)
 
@@ -104,6 +110,61 @@ def test_a_missing_node_package_is_reported(tmp_path):
 
     assert "node.not_installed" in findings, findings
     assert "lodash" in findings["node.not_installed"].detail
+
+
+def test_a_hollow_package_json_is_not_reported_as_node(tmp_path):
+    """Names in package.json are not requirements when the program is Python."""
+    project = _project(
+        tmp_path,
+        {
+            "requirements.txt": "requests\n",
+            "main.py": "print('hi')\n",
+            "package.json": json.dumps({"dependencies": {"build": "0.1.4", "@dabh/diagnostics": "2.0.9"}}),
+        },
+    )
+    _venv(project, ["requests"])
+
+    findings = _by_id(check_project_dependencies(project))
+
+    assert "node.not_installed" not in findings, findings
+
+
+def test_a_hidden_side_project_is_not_this_programs_imports(tmp_path):
+    """Sherlock's .actor folder is a different program."""
+    project = _project(
+        tmp_path,
+        {
+            "main.py": "print('hi')\n",
+            ".actor/app/main.py": "from agents import Agent\nfrom azure.identity import DefaultAzureCredential\nimport openai\n",
+        },
+    )
+    _venv(project)
+
+    findings = _by_id(check_project_dependencies(project))
+
+    assert "dependencies.import_missing" not in findings, findings
+
+
+def test_a_development_import_is_not_reported_as_missing(tmp_path):
+    """pytest is declared for tests. The program does not need it to run."""
+    project = _project(
+        tmp_path,
+        {
+            "pyproject.toml": (
+                "[tool.poetry]\nname = \"demo\"\nversion = \"0.1.0\"\n\n"
+                "[tool.poetry.dependencies]\npython = \"^3.9\"\n\n"
+                "[tool.poetry.group.dev.dependencies]\npytest = \"^8.0.0\"\n"
+            ),
+            "tests/test_thing.py": "import pytest\n",
+        },
+    )
+    _venv(project)
+
+    findings = _by_id(check_project_dependencies(project))
+
+    assert "dependencies.import_missing" not in findings, findings
+    assert "dependencies.skipped" not in findings, findings
+    assert "pytest" in findings["dependencies.not_needed"].detail
 
 
 def test_a_dependency_that_cannot_be_installed_is_reported(tmp_path):
