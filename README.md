@@ -1,5 +1,9 @@
 # Setup Manager
 
+*A simple setup tool made by a simple man and AI to help the ones who want to learn but don't know where to start.*
+
+**Setup Manager** helps you install and run programs on Windows more safely. It checks files before running them, stays on your own computer, and never sends your stuff to the cloud. It's free, MIT licensed, and yours to use, change, and share. If it helps you, pass it on.
+
 Setup Manager helps you set up and run development projects on Windows. It
 opens a dashboard in your browser, can detect common project types, install
 what a project needs (after you approve the commands), scan a folder for
@@ -137,8 +141,12 @@ Copyright (c) 2026 E. Guardado.
 This project was developed by E. Guardado with assistance from Grok Bot, and
 is shared so other people can set up their own tools the same way.
 
+## Questions or ideas?
+
+Open an [Issue](https://github.com/luckt707-maker/Setup-manager/issues) on this repo.
+
 ## Dedication
 
-In memory of JPP, who gave me the strength and the push to go on.
+In memory of JPP, who gave me the strength and the push to go on, and for his mom, Marina Hernandez.
 
 Thanks to Rock, for being a good critic. I couldn't have done it without you.
