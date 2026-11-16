@@ -65,7 +65,8 @@ def test_a_poetry_project_declares_its_packages(tmp_path):
 
     assert "tomli" in declared.names(), declared.names()
     assert "requests" in declared.names(), declared.names()
-    assert "pytest" in declared.names(), declared.names()
+    assert "pytest" not in declared.names(), declared.names()
+    assert any(item.name == "pytest" and "not needed to run" in item.reason for item in declared.skipped)
 
 
 def test_the_python_constraint_is_not_a_package(tmp_path):
@@ -110,6 +111,40 @@ def test_a_pep621_project_declares_its_packages(tmp_path):
     assert "requests" in declared.names(), declared.names()
     assert "flask" in declared.names(), declared.names()
     assert by_name["requests"].specifier == ">=2.22.0"
+
+
+def test_a_requirements_folder_installs_only_the_runtime_list(tmp_path):
+    """dev.txt and test.txt sit beside base.txt and must not be downloaded."""
+    project = _project(tmp_path, {
+        "requirements/base.txt": "requests>=2.22.0\n",
+        "requirements/dev.txt": "pytest\n",
+        "requirements/test.txt": "coverage\n",
+        "pyproject.toml": """
+[tool.poetry.dependencies]
+python = "^3.9"
+tomli = "^2.2.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.4.2"
+
+[tool.poetry.group.ci.dependencies]
+defusedxml = "^0.7.1"
+""",
+    })
+
+    from core.dependencies import install_arguments
+
+    declared = declared_requirements(project)
+    arguments = install_arguments(project)
+
+    assert "requests" in declared.names()
+    assert "tomli" in declared.names()
+    assert "pytest" not in declared.names()
+    assert "coverage" not in declared.names()
+    assert "defusedxml" not in declared.names()
+    assert "-r" in arguments and "requirements/base.txt" in arguments
+    assert "dev.txt" not in arguments
+    assert not any("pytest" in part for part in arguments)
 
 
 def test_a_requirements_txt_project_declares_its_packages(tmp_path):
@@ -210,6 +245,30 @@ def test_a_name_the_project_does_not_have_is_reported(tmp_path):
 
     assert [item.module for item in scan.missing_imports] == ["helper"], scan.missing_imports
     assert not scan.broken_imports, scan.broken_imports
+
+
+def test_a_hidden_folder_is_not_part_of_this_program(tmp_path):
+    """A side project under a hidden folder has its own imports."""
+    project = _project(
+        tmp_path,
+        {
+            "main.py": "print(1)\n",
+            ".actor/app/main.py": "import agents\n",
+        },
+    )
+
+    scan = scan_imports(project, set())
+
+    assert not scan.missing_imports, scan.missing_imports
+
+
+def test_a_development_package_is_not_reported_as_missing(tmp_path):
+    """The test suite may import a package the program does not need."""
+    project = _project(tmp_path, {"tests/test_thing.py": "import pytest\n"})
+
+    scan = scan_imports(project, set(), accepted={"pytest"})
+
+    assert not scan.missing_imports, scan.missing_imports
 
 
 def test_a_module_that_is_installed_is_not_reported(tmp_path):

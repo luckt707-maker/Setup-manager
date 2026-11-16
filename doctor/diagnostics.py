@@ -14,6 +14,8 @@ layer can render the same results.
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 import shutil
 import subprocess
@@ -28,7 +30,8 @@ OK = "ok"
 WARN = "warn"
 FAIL = "fail"
 
-#: Tools Setup Manager expects to find on a Windows development machine.
+#: Tools the system check knows how to find. A missing tool is an error only
+#: when the selected project needs it; see ``required_tools``.
 EXPECTED_TOOLS: Dict[str, str] = {
     "python": "https://www.python.org/downloads/",
     "node": "https://nodejs.org/",
@@ -37,6 +40,21 @@ EXPECTED_TOOLS: Dict[str, str] = {
     "docker": "https://www.docker.com/products/docker-desktop",
     "make": "https://www.gnu.org/software/make/",
 }
+_EXTRA_TOOL_URLS: Dict[str, str] = {
+    "go": "https://go.dev/dl/",
+    "yarn": "https://yarnpkg.com/",
+    "pnpm": "https://pnpm.io/",
+}
+_PYTHON_MANIFESTS = ("pyproject.toml", "requirements.txt", "setup.py", "Pipfile", "setup.cfg")
+_NODE_SOURCE = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}
+_SKIP_WALK = {"node_modules", "venv", ".venv", ".git", "__pycache__", "dist", "build", ".tox"}
+# A child folder with its own manifest is a separate program. Its source
+# must not make the parent look like it needs that language.
+_NESTED_MARKERS = (
+    "package.json", "go.mod", "pyproject.toml", "requirements.txt", "Pipfile",
+    "Cargo.toml", "composer.json", "Gemfile", "pom.xml", "build.gradle",
+    "build.gradle.kts", "Package.swift", "setup.py",
+)
 
 #: A ``wsl.conf`` line is ``key = value``; this catches the common breakage
 #: where the ``=`` went missing during an edit.
@@ -72,19 +90,164 @@ class Diagnostic:
 # --------------------------------------------------------------------------- #
 # Machine checks
 # --------------------------------------------------------------------------- #
-def check_tooling() -> List[Diagnostic]:
-    """Report which of the expected developer tools are installed."""
+def _has_source(project: Path, suffixes: set) -> bool:
+    """True when the tree contains a source file of one of these types.
+
+    Dependency and environment folders are skipped. The walk stops after a
+    few thousand names so a huge checkout cannot stall the system check.
+    """
+    seen = 0
+    for dirpath, dirnames, filenames in os.walk(project):
+        here = Path(dirpath).resolve()
+        kept = []
+        for name in dirnames:
+            if name in _SKIP_WALK or name.startswith("."):
+                continue
+            child = here / name
+            if any((child / marker).is_file() for marker in _NESTED_MARKERS):
+                continue
+            kept.append(name)
+        dirnames[:] = kept
+        for name in filenames:
+            seen += 1
+            if seen > 4000:
+                return False
+            if Path(name).suffix.lower() in suffixes:
+                return True
+    return False
+
+
+def _read_package_json(project: Path) -> Optional[Dict[str, Any]]:
+    path = project / "package.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _node_package_manager(project: Path) -> str:
+    yarn = (project / "yarn.lock").is_file()
+    pnpm = (project / "pnpm-lock.yaml").is_file()
+    npm = (project / "package-lock.json").is_file()
+    if pnpm and not npm:
+        return "pnpm"
+    if yarn and not npm:
+        return "yarn"
+    return "npm"
+
+
+def required_tools(project: Path) -> Dict[str, str]:
+    """Tools this project needs, each with a short reason.
+
+    A familiar filename is not enough. ``package.json`` with no scripts and
+    no JavaScript, a ``go.mod`` with no Go source, a Dockerfile beside a
+    real language project, and Make with no Makefile are not requirements.
+    """
+    project = Path(project)
+    needed: Dict[str, str] = {}
+    python_manifest = next((name for name in _PYTHON_MANIFESTS if (project / name).is_file()), "")
+    if python_manifest or _has_source(project, {".py"}):
+        needed["python"] = f"Python project ({python_manifest})" if python_manifest else "this folder contains Python source"
+
+    package = _read_package_json(project)
+    if package is not None:
+        scripts = package.get("scripts")
+        has_scripts = isinstance(scripts, dict) and any(str(value).strip() for value in scripts.values())
+        main = package.get("main")
+        has_entry = isinstance(main, str) and (project / main).is_file()
+        if has_scripts or has_entry or _has_source(project, _NODE_SOURCE):
+            manager = _node_package_manager(project)
+            needed["node"] = "this project has JavaScript or TypeScript to run"
+            needed[manager] = f"this project installs its packages with {manager}"
+
+    if (project / "go.mod").is_file() and _has_source(project, {".go"}):
+        needed["go"] = "this project has Go source"
+
+    if any((project / name).is_file() for name in ("Makefile", "makefile", "GNUmakefile")):
+        needed["make"] = "this project has a Makefile"
+
+    if (project / ".git").exists():
+        needed["git"] = "this folder is a Git repository"
+
+    docker_files = [
+        name for name in ("Dockerfile", "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml")
+        if (project / name).is_file()
+    ]
+    language = [name for name in ("python", "node", "go") if name in needed]
+    if docker_files and not language:
+        needed["docker"] = "Docker is how this folder is built"
+    return needed
+
+
+def tooling_report(project: Optional[Path] = None) -> Dict[str, Any]:
+    """Installed tools, and which missing ones this project actually needs.
+
+    With no project, a tool that is not installed is ``not_needed`` rather
+    than an error. Nothing has asked for it yet.
+    """
+    needed = required_tools(project) if project is not None else {}
+    names = list(EXPECTED_TOOLS)
+    for tool in needed:
+        if tool not in names:
+            names.append(tool)
+    tools: Dict[str, Dict[str, Any]] = {}
+    for tool in names:
+        url = EXPECTED_TOOLS.get(tool) or _EXTRA_TOOL_URLS.get(tool)
+        found = shutil.which(tool)
+        is_needed = tool in needed
+        if found:
+            status = "ready"
+        elif project is not None and is_needed:
+            status = "missing"
+        else:
+            status = "not_needed"
+        tools[tool] = {
+            "status": status,
+            "path": found,
+            "url": url if status == "missing" else None,
+            "needed": is_needed,
+            "reason": needed.get(tool, ""),
+        }
+    return {"project": str(project) if project is not None else None, "tools": tools}
+
+
+def check_tooling(project: Optional[Path] = None) -> List[Diagnostic]:
+    """Report which of the expected developer tools are installed.
+
+    Pass a project to warn only about tools that project needs. The others
+    stay ok, so a Python folder does not fail the check for Docker or Make.
+    """
+    report = tooling_report(project)
     results: List[Diagnostic] = []
-    for tool, url in EXPECTED_TOOLS.items():
-        path = shutil.which(tool)
+    for tool, info in report["tools"].items():
+        found = info["path"]
+        if project is not None and not info["needed"]:
+            results.append(
+                Diagnostic(
+                    id=f"tool.{tool}",
+                    title=f"{tool} is not required",
+                    status=OK,
+                    detail="This project does not need it.",
+                    data={"path": found, "url": info["url"], "needed": False},
+                )
+            )
+            continue
+        url = EXPECTED_TOOLS.get(tool) or _EXTRA_TOOL_URLS.get(tool) or ""
+        missing = not found
+        # A bare check still lists every absent tool. A project only warns
+        # for a tool it needs; the unneeded ones returned above.
+        status = OK if found else WARN
         results.append(
             Diagnostic(
                 id=f"tool.{tool}",
                 title=f"{tool} is installed",
-                status=OK if path else WARN,
-                detail=path or f"{tool} was not found on PATH",
-                fix=None if path else f"Install {tool}: {url}",
-                data={"path": path, "url": url},
+                status=status,
+                detail=(found or info["reason"] or f"{tool} was not found on PATH"),
+                fix=None if not missing else f"Install {tool}: {url}",
+                data={"path": found, "url": url, "needed": info["needed"]},
             )
         )
     return results
@@ -340,7 +503,7 @@ def diagnose_build_output(output: str) -> List[Diagnostic]:
 def run_machine_diagnostics(root: Optional[Path] = None) -> List[Diagnostic]:
     """Run every machine-level check."""
     results: List[Diagnostic] = []
-    results.extend(check_tooling())
+    results.extend(check_tooling(root))
     results.extend(check_tool_versions())
     results.extend(check_python_environment())
     results.extend(check_wsl_config())

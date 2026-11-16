@@ -24,6 +24,7 @@ from doctor.repairs import clear_pycache, prune_broken_symlinks, strip_zone_iden
 # Knowledge base
 # --------------------------------------------------------------------------- #
 def test_known_failures_are_matched():
+    assert KnowledgeBase.lookup("pattern client/dist/*: no matching files found")["name"] == "Go embed has nothing to include"
     assert KnowledgeBase.lookup("the project wants python 2.7")["name"] == "Legacy Python Prerequisite"
     assert KnowledgeBase.lookup("No module named 'requests'")["name"] == "Missing Python Package"
     assert KnowledgeBase.lookup("npm ERR! code E404")["name"] == "Node Dependency Failure"
@@ -65,6 +66,78 @@ def test_tooling_check_reports_every_expected_tool():
     }
     for finding in findings:
         assert finding.status in ("ok", "warn")
+
+
+def test_python_project_does_not_require_unused_tools(tmp_path):
+    """A Dockerfile, a stub go.mod, and an empty package.json are not toolchains."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12\n", encoding="utf-8")
+    (tmp_path / "go.mod").write_text("module myproject\n\ngo 1.21\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"dependencies":{"left-pad":"1.0.0"}}\n', encoding="utf-8")
+    from doctor.diagnostics import required_tools
+
+    needed = required_tools(tmp_path)
+    assert "python" in needed
+    assert "node" not in needed
+    assert "npm" not in needed
+    assert "docker" not in needed
+    assert "make" not in needed
+    assert "go" not in needed
+    findings = {item.id: item for item in check_tooling(tmp_path)}
+    assert findings["tool.node"].status == "ok"
+    assert findings["tool.docker"].status == "ok"
+    assert findings["tool.make"].status == "ok"
+
+
+def test_a_nested_web_client_does_not_make_the_parent_a_node_app(tmp_path):
+    """PhoneInfoga's Vue client lives under web/client. The Go program does not need npm."""
+    from doctor.diagnostics import required_tools
+
+    root = tmp_path / "PhoneInfoga"
+    client = root / "web" / "client" / "src"
+    client.mkdir(parents=True)
+    (root / "go.mod").write_text("module example.com/phoneinfoga\n\ngo 1.20\n", encoding="utf-8")
+    (root / "main.go").write_text("package main\nfunc main() {}\n", encoding="utf-8")
+    (root / "package.json").write_text('{"dependencies":{"build":"0.1.4","main":"1000.0.1"}}\n', encoding="utf-8")
+    (root / "web" / "client" / "package.json").write_text(
+        '{"scripts":{"build":"vue-cli-service build"}}\n', encoding="utf-8"
+    )
+    (client / "main.ts").write_text("export {}\n", encoding="utf-8")
+
+    needed = required_tools(root)
+    assert "go" in needed
+    assert "node" not in needed
+    assert "npm" not in needed
+    client_needed = required_tools(root / "web" / "client")
+    assert "node" in client_needed
+
+
+def test_real_manifests_require_their_tools(tmp_path):
+    from doctor.diagnostics import required_tools
+
+    node = tmp_path / "node-app"
+    node.mkdir()
+    (node / "package.json").write_text(
+        '{"scripts":{"test":"node test.js"}}\n', encoding="utf-8"
+    )
+    needed = required_tools(node)
+    assert needed["node"]
+    assert needed["npm"]
+    assert "docker" not in needed
+
+    docker_only = tmp_path / "image"
+    docker_only.mkdir()
+    (docker_only / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    assert "docker" in required_tools(docker_only)
+
+    built = tmp_path / "built"
+    built.mkdir()
+    (built / "Makefile").write_text("all:\n\t@echo hi\n", encoding="utf-8")
+    (built / "main.go").write_text("package main\nfunc main() {}\n", encoding="utf-8")
+    (built / "go.mod").write_text("module example.com/built\n\ngo 1.21\n", encoding="utf-8")
+    go_needed = required_tools(built)
+    assert "make" in go_needed
+    assert "go" in go_needed
 
 
 def test_machine_diagnostics_run_and_summarise():

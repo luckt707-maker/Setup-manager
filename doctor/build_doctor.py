@@ -26,6 +26,7 @@ from .diagnostics import (
     summarize,
 )
 from .dependencies import check_project_dependencies
+from .learning import record_learned_fix
 from .log_manager import DoctorLogManager
 from .repairs import Repair, apply_repair, available_repairs
 
@@ -137,11 +138,41 @@ class BuildDoctor:
         except OSError:
             return None
 
-    def apply(self, repair: Repair, dry_run: bool = False) -> Dict[str, Any]:
-        """Apply one repair and record the outcome."""
+    def _problems(self) -> Dict[str, Diagnostic]:
+        """The findings that are a problem right now, by id."""
+        found = run_machine_diagnostics(self.project_path)
+        if self.project_path is not None:
+            found.extend(check_project_dependencies(self.project_path))
+        return {d.id: d for d in found if d.is_problem}
+
+    def apply(self, repair: Repair, dry_run: bool = False, learn: bool = True) -> Dict[str, Any]:
+        """Apply one repair and record the outcome.
+
+        When the repair changed something and the problem it targets is gone
+        afterwards, the fix is remembered in the knowledge base.
+        """
+        before = self._problems() if (learn and not dry_run) else {}
         changed, message = apply_repair(repair, dry_run=dry_run)
-        self.log_manager.record({"action": "repair", "repair": repair.id, "changed": changed})
-        return {"repair": repair.id, "changed": changed, "message": message}
+        verified = False
+        learned = False
+        target = before.get(repair.applies_to)
+        if changed and target is not None:
+            verified = repair.applies_to not in self._problems()
+            if verified:
+                learned = record_learned_fix(
+                    target.title,
+                    target.title,
+                    target.detail or repair.description,
+                    target.fix or repair.title,
+                )
+        self.log_manager.record({
+            "action": "repair", "repair": repair.id, "changed": changed,
+            "verified": verified, "learned": learned,
+        })
+        return {
+            "repair": repair.id, "changed": changed, "message": message,
+            "verified": verified, "learned": learned,
+        }
 
 
 # --------------------------------------------------------------------------- #

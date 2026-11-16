@@ -10,6 +10,7 @@ dependencies outside its own environment.
 """
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from pathlib import Path
@@ -41,6 +42,20 @@ def _read(path: Path) -> str:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+
+
+def gradle_command(root: Path, *args: str) -> List[str]:
+    """The Gradle invocation for this project.
+
+    Windows cannot execute the ``gradlew`` shell script. The batch file
+    beside it is the program CreateProcess can start.
+    """
+    root = Path(root)
+    if os.name == "nt" and (root / "gradlew.bat").is_file():
+        return ["gradlew.bat", *args]
+    if (root / "gradlew").is_file():
+        return ["./gradlew", *args]
+    return ["gradle", *args]
 
 
 def make_command() -> Optional[str]:

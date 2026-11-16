@@ -34,4 +34,6 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
+    print("Note: the dashboard (run.bat) is the main way to use Setup Manager; "
+          "this terminal menu is the backup.")
     main()

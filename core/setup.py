@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 import subprocess
 import sys
 
@@ -7,12 +7,106 @@ from .cmdline import split_command
 from .dependencies import (
     declared_requirements,
     find_venv,
+    install_arguments,
     installed_distributions,
     normalize_name,
     site_packages_dirs,
 )
 from .detector import ProjectDetector, QoLExtensionsRegistry
 from .executor import CommandExecutor
+from .language_templates import get_all_install_prefixes, get_template
+from .tooling import gradle_command
+
+
+def source_retry_command(command: List[str], project: Path) -> Optional[List[str]]:
+    """The same pip install without ``--only-binary``.
+
+    The first attempt stays wheel-only so a local path cannot run the
+    project's setup code. Some packages, stem among them, publish no
+    Windows wheel. Those can be built from the package index. A path,
+    an editable install, or a requirements file that points at one is
+    not retried.
+    """
+    if "--only-binary=:all:" not in command or "install" not in command:
+        return None
+    if not _index_packages_only(command, Path(project)):
+        return None
+    return [part for part in command if part != "--only-binary=:all:"]
+
+
+def _index_packages_only(command: List[str], project: Path) -> bool:
+    args = [str(part) for part in command[command.index("install") + 1:]
+            if part != "--only-binary=:all:"]
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg in {"-r", "--requirement", "-c", "--constraint"}:
+            index += 1
+            if index >= len(args):
+                return False
+            if arg in {"-c", "--constraint"}:
+                index += 1
+                continue
+            path = Path(args[index])
+            if not path.is_absolute():
+                path = project / path
+            if not _requirement_file_is_index_only(path, set()):
+                return False
+            index += 1
+            continue
+        if arg in {"-e", "--editable"} or arg.startswith(("-e", "--editable=")):
+            return False
+        if arg.startswith("-"):
+            index += 1
+            continue
+        if _is_not_an_index_package(arg):
+            return False
+        index += 1
+    return True
+
+
+def _is_not_an_index_package(arg: str) -> bool:
+    lowered = arg.lower()
+    if arg in {".", ".."} or arg.startswith((".", "/", "\\")):
+        return True
+    if "\\" in arg or (len(arg) > 1 and arg[1] == ":"):
+        return True
+    if "://" in arg or lowered.startswith(("git+", "hg+", "svn+", "bzr+")):
+        return True
+    return False
+
+
+def _requirement_file_is_index_only(path: Path, seen: set) -> bool:
+    key = str(path.resolve()) if path.exists() else str(path)
+    if key in seen:
+        return True
+    seen.add(key)
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    for line in text.splitlines():
+        stripped = line.split("#", 1)[0].strip()
+        if not stripped:
+            continue
+        parts = stripped.split()
+        head = parts[0]
+        if head in {"-c", "--constraint"}:
+            continue
+        if head in {"-r", "--requirement"}:
+            if len(parts) < 2:
+                return False
+            child = Path(parts[1])
+            if not child.is_absolute():
+                child = path.parent / child
+            if not _requirement_file_is_index_only(child, seen):
+                return False
+            continue
+        if head in {"-e", "--editable"} or head.startswith(("-e", "--editable=")):
+            return False
+        if _is_not_an_index_package(head):
+            return False
+    return True
 
 
 class Setup:
@@ -25,15 +119,15 @@ class Setup:
     # that is the normal case, not a failure, so it is reported as a skip.
     NO_TESTS_EXIT_CODE = 5
 
-    # Only these commands install something. The rest of the registry holds
-    # run commands ('python -m cProfile', 'node --prof', 'npm audit'),
-    # and running one of those as an installation does nothing useful and
-    # can hang the task forever.
-    INSTALL_PREFIXES = {
-        'python': ('pip ', 'pip3 '),
-        'nodejs': ('npm install ', 'npm i ', 'npx '),
-        'dotnet': ('dotnet add package ',),
-    }
+    # Install prefixes are loaded from language_templates.py so that adding
+    # a new language requires editing only the template definition.
+    @staticmethod
+    def _build_install_prefixes() -> Dict[str, tuple]:
+        """Build install prefixes from language templates."""
+        raw = get_all_install_prefixes()
+        return {k: tuple(v) for k, v in raw.items()}
+
+    INSTALL_PREFIXES = _build_install_prefixes()
 
     def __init__(self, project_path: str = '.', interactive: bool = False):
         self.project_path = project_path
@@ -49,6 +143,25 @@ class Setup:
             callback(message)
         else:
             print(message)
+
+    def _pip_install(
+        self,
+        python: Path,
+        arguments: List[str],
+        callback: Optional[Callable[[str], None]],
+    ) -> bool:
+        """Install from wheels, then from source when a package has no wheel."""
+        command = [str(python), "-m", "pip", "install", "--only-binary=:all:", *arguments]
+        if self.executor.run(command, cwd=self.project_path, callback=callback):
+            return True
+        retry = source_retry_command(command, Path(self.project_path))
+        if retry is None:
+            return False
+        self._emit(
+            callback,
+            "  One package has no wheel. Retrying so pip can build that package from source.",
+        )
+        return self.executor.run(retry, cwd=self.project_path, callback=callback)
 
     def install_extensions(
         self,
@@ -272,18 +385,14 @@ class Setup:
         ]
 
     def python_install_requirements(self) -> List[str]:
-        """What to give pip for this project.
+        """What to give pip so the program can run.
 
-        A project with a requirements.txt is installed from that file; one
-        that declares its dependencies in pyproject.toml - the Poetry
-        table or the standard ``[project]`` table - is given the
-        requirements themselves.
+        Runtime requirement files and the main dependency table are
+        included. Development groups, test lists, and optional extras
+        are left out.
         """
         project_root = Path(self.project_path).expanduser().resolve()
-        if (project_root / 'requirements.txt').is_file():
-            return ['-r', 'requirements.txt']
-        declared = declared_requirements(project_root)
-        return [requirement.to_pip() for requirement in declared.requirements]
+        return install_arguments(project_root)
 
     def missing_requirements(self) -> List[Any]:
         """The declared dependencies that are not installed, with their constraints."""
@@ -324,11 +433,10 @@ class Setup:
 
         names = ", ".join(requirement.name for requirement in missing)
         self._emit(callback, f"📦 Installing the missing dependencies: {names}")
-        return self.executor.run(
-            [str(venv_python), '-m', 'pip', 'install', '--only-binary=:all:',
-             *[requirement.to_pip() for requirement in missing]],
-            cwd=self.project_path,
-            callback=callback,
+        return self._pip_install(
+            venv_python,
+            [requirement.to_pip() for requirement in missing],
+            callback,
         )
 
     def run_quality_checks(
@@ -451,32 +559,13 @@ class Setup:
             cwd=self.project_path, callback=callback):
             return False
 
-        # Install requirements if exists
-        req_file = Path(self.project_path) / 'requirements.txt'
-        if req_file.exists():
-            # --only-binary=:all: keeps pip from building a source
-            # distribution, which runs the project's setup.py.
-            if not self.executor.run(
-                [str(venv_python), '-m', 'pip', 'install', '--only-binary=:all:', '-r', 'requirements.txt'],
-                cwd=self.project_path, callback=callback):
-                return False
-
-        # A project that declares its dependencies in pyproject.toml - the
-        # Poetry table or the standard [project] table - needs them
-        # installed just as much as one with a requirements.txt.
-        declared = declared_requirements(project_root)
-        extra = [
-            requirement
-            for requirement in declared.requirements
-            if requirement.source != 'requirements.txt'
-        ]
-        if extra:
-            names = ", ".join(requirement.name for requirement in extra)
-            self._emit(callback, f"  📦 Installing the project's dependencies: {names}")
-            if not self.executor.run(
-                [str(venv_python), '-m', 'pip', 'install', '--only-binary=:all:',
-                 *[requirement.to_pip() for requirement in extra]],
-                cwd=self.project_path, callback=callback):
+        # Only what the program needs to run. Dev, test, and optional
+        # extras are not downloaded. --only-binary keeps pip from building
+        # a source distribution, which would run the project's setup.py.
+        arguments = install_arguments(project_root)
+        if arguments:
+            self._emit(callback, "  📦 Installing what the program needs to run.")
+            if not self._pip_install(venv_python, arguments, callback):
                 return False
 
         return True
@@ -525,6 +614,114 @@ class Setup:
             return False
 
         return True
+
+    def setup_java(self, callback: Optional[Callable[[str], None]] = None) -> bool:
+        """Setup Java project with Maven or Gradle"""
+        self._emit(callback, "\n📦 Setting up Java environment...")
+        if not self.executor.check_installed("java"):
+            self._emit(callback, "❌ Java is not installed. Please install it first.")
+            return False
+
+        project_root = Path(self.project_path)
+        if (project_root / "build.gradle.kts").exists() or (project_root / "build.gradle").exists():
+            return self.executor.run(
+                gradle_command(project_root, "build"), cwd=self.project_path, callback=callback
+            )
+        elif (project_root / "pom.xml").exists():
+            return self.executor.run("mvn clean install", cwd=self.project_path, callback=callback)
+        else:
+            self._emit(callback, "⚠️ No Maven or Gradle build file found.")
+            return False
+
+    def setup_go(self, callback: Optional[Callable[[str], None]] = None) -> bool:
+        """Setup Go project"""
+        self._emit(callback, "\n📦 Setting up Go environment...")
+        if not self.executor.check_installed("go"):
+            self._emit(callback, "❌ Go is not installed. Please install it first.")
+            return False
+
+        project_root = Path(self.project_path)
+        if not (project_root / "go.mod").exists():
+            self._emit(callback, "⚠️ No go.mod found. Run 'go mod init' first.")
+            return False
+
+        return self.executor.run("go mod tidy", cwd=self.project_path, callback=callback)
+
+    def setup_rust(self, callback: Optional[Callable[[str], None]] = None) -> bool:
+        """Setup Rust project"""
+        self._emit(callback, "\n📦 Setting up Rust environment...")
+        if not self.executor.check_installed("cargo"):
+            self._emit(callback, "❌ Rust/Cargo is not installed. Please install it first.")
+            return False
+
+        project_root = Path(self.project_path)
+        if not (project_root / "Cargo.toml").exists():
+            self._emit(callback, "⚠️ No Cargo.toml found.")
+            return False
+
+        return self.executor.run("cargo build", cwd=self.project_path, callback=callback)
+
+    def setup_php(self, callback: Optional[Callable[[str], None]] = None) -> bool:
+        """Setup PHP project with Composer"""
+        self._emit(callback, "\n📦 Setting up PHP environment...")
+        if not self.executor.check_installed("php"):
+            self._emit(callback, "❌ PHP is not installed. Please install it first.")
+            return False
+
+        if not self.executor.check_installed("composer"):
+            self._emit(callback, "❌ Composer is not installed. Please install it first.")
+            return False
+
+        project_root = Path(self.project_path)
+        if not (project_root / "composer.json").exists():
+            self._emit(callback, "⚠️ No composer.json found.")
+            return False
+
+        return self.executor.run("composer install", cwd=self.project_path, callback=callback)
+
+    def setup_typescript(self, callback: Optional[Callable[[str], None]] = None) -> bool:
+        """Setup TypeScript project"""
+        self._emit(callback, "\n📦 Setting up TypeScript environment...")
+        if not self.executor.check_installed("node"):
+            self._emit(callback, "❌ Node.js is not installed. Please install it first.")
+            return False
+
+        return self.executor.run("npm install", cwd=self.project_path, callback=callback)
+
+    def setup_kotlin(self, callback: Optional[Callable[[str], None]] = None) -> bool:
+        """Setup Kotlin project"""
+        self._emit(callback, "\n📦 Setting up Kotlin environment...")
+        if not self.executor.check_installed("java"):
+            self._emit(callback, "❌ Java is not installed. Please install it first.")
+            return False
+
+        return self.executor.run(
+            gradle_command(Path(self.project_path), "build"),
+            cwd=self.project_path,
+            callback=callback,
+        )
+
+    def setup_swift(self, callback: Optional[Callable[[str], None]] = None) -> bool:
+        """Setup Swift project"""
+        self._emit(callback, "\n📦 Setting up Swift environment...")
+        if not self.executor.check_installed("swift"):
+            self._emit(callback, "❌ Swift is not installed. Please install it first.")
+            return False
+
+        return self.executor.run("swift build", cwd=self.project_path, callback=callback)
+
+    def setup_scala(self, callback: Optional[Callable[[str], None]] = None) -> bool:
+        """Setup Scala project"""
+        self._emit(callback, "\n📦 Setting up Scala environment...")
+        if not self.executor.check_installed("java"):
+            self._emit(callback, "❌ Java is not installed. Please install it first.")
+            return False
+
+        if not self.executor.check_installed("sbt"):
+            self._emit(callback, "❌ sbt is not installed. Please install it first.")
+            return False
+
+        return self.executor.run("sbt compile", cwd=self.project_path, callback=callback)
 
     def _make_command(self):
         """Return the available Make executable name"""
@@ -603,9 +800,7 @@ class Setup:
                 success &= self.executor.run(
                     [str(venv_python), '-m', 'pip', 'install', '--upgrade', 'pip'],
                     cwd=self.project_path, callback=callback)
-                success &= self.executor.run(
-                    [str(venv_python), '-m', 'pip', 'install', '--only-binary=:all:', '-r', 'requirements.txt'],
-                    cwd=self.project_path, callback=callback)
+                success &= self._pip_install(venv_python, ['-r', 'requirements.txt'], callback)
             else:
                 self._emit(callback, "   ⚪ Skipping Python updates: create the venv and requirements.txt first")
         if 'nodejs' in detected:

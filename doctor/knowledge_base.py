@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from core.command_risk import command_risk
+
 #: Extra knowledge can be dropped into this directory as JSON files, each
 #: holding a mapping of ``signature -> {name, cause, fix}``.
 KNOWLEDGE_DIR = Path(__file__).resolve().parent.parent / "knowledge"
@@ -86,6 +88,12 @@ class KnowledgeBase:
             "name": "CMake Configuration Problem",
             "cause": "Build configuration failure",
             "fix": "Review generator and root project"
+        },
+
+        "no matching files found": {
+            "name": "Go embed has nothing to include",
+            "cause": "A //go:embed pattern matched no files. A path under the Go module cache means go.mod names a different module than the imports, so Go compiled a downloaded copy.",
+            "fix": "Add a real file that the embed pattern matches. Make the go.mod module line match the import path, and remove a require of that same module."
         }
     }
 
@@ -105,14 +113,38 @@ class KnowledgeBase:
                 continue
             for signature, entry in data.items():
                 if isinstance(entry, dict) and {"name", "cause", "fix"} <= set(entry):
-                    extras[signature] = dict(entry)
+                    if cls.is_trusted_entry(entry):
+                        extras[signature] = dict(entry)
         return extras
+
+    #: Entries marked as model-made are skipped. This is only a courtesy for
+    #: honest tools; the real check is the risk test on the text below.
+    UNTRUSTED_SOURCES = {"ai", "model", "assistant", "llm", "ollama"}
+
+    @classmethod
+    def is_trusted_entry(cls, entry):
+        """False for AI-made entries and for advice that looks like malware.
+
+        A poisoned knowledge file would otherwise hand every later user a
+        harmful "fix", so this check runs every time the table is loaded.
+        """
+        if str(entry.get("source", "")).strip().lower() in cls.UNTRUSTED_SOURCES:
+            return False
+        text = " ".join(str(entry.get(key, "")) for key in ("name", "cause", "fix"))
+        return command_risk(text) is None
 
     @classmethod
     def all_failures(cls):
-        """Built-in knowledge first (its order is deliberate), then extras."""
+        """Built-in knowledge first (its order is deliberate), then extras.
+
+        Built-ins are authoritative: an extra file can add new signatures
+        but cannot replace a built-in fix, whatever its letter case.
+        """
         merged = dict(cls.KNOWN_FAILURES)
-        merged.update(cls.extra_failures())
+        builtin = {signature.lower() for signature in merged}
+        for signature, entry in cls.extra_failures().items():
+            if signature.lower() not in builtin:
+                merged.setdefault(signature, entry)
         return merged
 
     @classmethod

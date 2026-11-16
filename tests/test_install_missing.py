@@ -88,6 +88,49 @@ def test_nothing_is_installed_when_everything_is_present(tmp_path):
     assert setup.executor.commands == [], setup.executor.text()
 
 
+class _WheelsFailExecutor(_RecordingExecutor):
+    """The wheel-only install fails. A later install is allowed to succeed."""
+
+    def run(self, command, cwd=None, show_output=False, callback=None):
+        self.commands.append(command)
+        text = command if isinstance(command, str) else " ".join(str(part) for part in command)
+        return "--only-binary=:all:" not in text
+
+
+def test_a_package_without_a_wheel_is_installed_from_source(tmp_path):
+    """stem publishes no Windows wheel, so the wheel-only install cannot finish."""
+    project = _project(tmp_path, {"pyproject.toml": POETRY_PROJECT})
+
+    setup = Setup(str(project))
+    setup.executor = _WheelsFailExecutor()
+    messages = []
+    success = setup.install_missing_packages(callback=messages.append)
+
+    assert success is True, messages
+    assert "--only-binary=:all:" in setup.executor.commands[0]
+    assert "--only-binary=:all:" not in setup.executor.commands[1]
+    assert "no wheel" in "\n".join(messages)
+
+
+def test_a_local_project_is_not_built_when_the_wheel_install_fails(tmp_path):
+    """Dropping the wheel limit must not run the project's own setup code."""
+    from core.setup import source_retry_command
+
+    editable = [sys.executable, "-m", "pip", "install", "--only-binary=:all:", "-e", "."]
+    assert source_retry_command(editable, tmp_path) is None
+
+    (tmp_path / "requirements.txt").write_text("-e .\nrequests\n", encoding="utf-8")
+    from_file = [
+        sys.executable, "-m", "pip", "install", "--only-binary=:all:", "-r", "requirements.txt",
+    ]
+    assert source_retry_command(from_file, tmp_path) is None
+
+    named = [sys.executable, "-m", "pip", "install", "--only-binary=:all:", "stem>=1.8.0,<2.0.0"]
+    assert source_retry_command(named, tmp_path) == [
+        sys.executable, "-m", "pip", "install", "stem>=1.8.0,<2.0.0",
+    ]
+
+
 def test_a_project_without_a_virtual_environment_is_told_to_set_up_python(tmp_path):
     """Packages belong to the project's own environment, not to ours."""
     project = tmp_path / "proj"

@@ -27,12 +27,23 @@ from core.dependencies import (
 )
 from core.tooling import find_makefile, make_command
 
-from .diagnostics import FAIL, OK, WARN, Diagnostic
+from .diagnostics import FAIL, OK, WARN, Diagnostic, required_tools
 
 
 def _one_or_many(count: int) -> str:
     """'is' for one thing, 'are' for more."""
     return "is" if count == 1 else "are"
+
+
+def _left_out_on_purpose(reason: str) -> bool:
+    """True when a dependency was skipped because the program does not need it."""
+    text = reason.lower()
+    return (
+        "not needed to run" in text
+        or "not part of what the program needs" in text
+        or "not installed by default" in text
+        or "not installed for everyone" in text
+    )
 
 
 def check_project_dependencies(root: Path) -> List[Diagnostic]:
@@ -87,8 +98,21 @@ def check_project_dependencies(root: Path) -> List[Diagnostic]:
             )
         )
 
-    if declared.skipped:
-        detail = "; ".join(f"{item.name}: {item.reason}" for item in declared.skipped)
+    left_out = [item for item in declared.skipped if _left_out_on_purpose(item.reason)]
+    blocked = [item for item in declared.skipped if item not in left_out]
+    if left_out:
+        names = ", ".join(item.name for item in left_out)
+        findings.append(
+            Diagnostic(
+                id="dependencies.not_needed",
+                title="Left out, not needed to run",
+                status=OK,
+                detail=names,
+                data={"packages": [item.name for item in left_out]},
+            )
+        )
+    if blocked:
+        detail = "; ".join(f"{item.name}: {item.reason}" for item in blocked)
         findings.append(
             Diagnostic(
                 id="dependencies.skipped",
@@ -96,11 +120,12 @@ def check_project_dependencies(root: Path) -> List[Diagnostic]:
                 status=WARN,
                 detail=detail,
                 fix="Install these by hand, or change how they are declared.",
-                data={"skipped": [{"name": item.name, "reason": item.reason} for item in declared.skipped]},
+                data={"skipped": [{"name": item.name, "reason": item.reason} for item in blocked]},
             )
         )
 
-    scan = scan_imports(root, available, declared.normalized_names())
+    accepted = {normalize_name(item.name) for item in left_out}
+    scan = scan_imports(root, available, declared.normalized_names(), accepted)
     if scan.missing_imports:
         modules = ", ".join(item.module for item in scan.missing_imports)
         packages = ", ".join(scan.packages())
@@ -153,7 +178,8 @@ def check_project_dependencies(root: Path) -> List[Diagnostic]:
         )
 
     node_declared, node_missing = node_dependencies(root)
-    if node_missing:
+    # A package.json that only lists unused names is not a Node program.
+    if node_missing and "node" in required_tools(root):
         names = ", ".join(node_missing)
         findings.append(
             Diagnostic(

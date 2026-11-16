@@ -10,9 +10,12 @@ def test_default_client_configuration(monkeypatch):
         "SETUP_MANAGER_OLLAMA_TIMEOUT",
     ):
         monkeypatch.delenv(name, raising=False)
+    import ollama_client
+
+    monkeypatch.setattr(ollama_client, "total_ram_gb", lambda: 12.0)
     client = OllamaClient()
     assert client.base_url == "http://127.0.0.1:11434"
-    assert client.model == "qwen2.5-coder:7b"
+    assert client.model == "qwen2.5-coder:3b"
     assert client.timeout == 300.0
 
 

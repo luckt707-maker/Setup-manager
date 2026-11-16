@@ -4,6 +4,7 @@ A Makefile usually has a dozen targets and a compose file a few services.
 Offering "make" on its own leaves the user to know which target they want,
 so the app reads both files and offers the real choices.
 """
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -12,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.tooling import compose_services, make_command, make_targets  # noqa: E402
+from core.tooling import compose_services, gradle_command, make_command, make_targets  # noqa: E402
 
 MAKEFILE = """
 .PHONY: all build test clean
@@ -152,3 +153,18 @@ def test_no_make_installed_means_no_make_command(monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda name: None)
 
     assert make_command() is None
+
+
+def test_windows_gradle_projects_use_the_batch_wrapper(tmp_path):
+    """The shell script named gradlew cannot be started on Windows."""
+    (tmp_path / "gradlew").write_text("#!/bin/sh\n", encoding="utf-8")
+    (tmp_path / "gradlew.bat").write_text("@echo off\r\n", encoding="ascii")
+
+    if os.name == "nt":
+        assert gradle_command(tmp_path, "build") == ["gradlew.bat", "build"]
+    else:
+        assert gradle_command(tmp_path, "build") == ["./gradlew", "build"]
+
+
+def test_gradle_without_a_wrapper_uses_the_gradle_program(tmp_path):
+    assert gradle_command(tmp_path, "test") == ["gradle", "test"]

@@ -249,11 +249,44 @@ def _parse_requirement_line(line: str, source: str) -> Tuple[Optional[Requiremen
     return Requirement(name=name, specifier=specifier, source=source, extras=extras), None
 
 
-def _requirements_txt(root: Path) -> Tuple[List[Requirement], List[Skipped]]:
-    """Read requirements.txt."""
-    path = root / "requirements.txt"
-    if not path.is_file():
-        return [], []
+# Files that name what the program needs in order to run. A requirements
+# folder often also holds dev, test, and docs lists; those are not installed.
+_RUNTIME_REQUIREMENT_NAMES = {
+    "base.txt", "prod.txt", "production.txt", "main.txt", "runtime.txt",
+    "default.txt", "requirements.txt", "app.txt",
+}
+_DEV_REQUIREMENT_PARTS = ("dev", "develop", "development", "test", "tests", "testing", "doc", "docs", "ci", "lint", "style", "optional", "extra")
+
+
+def _is_dev_extra(name: str) -> bool:
+    """True for a Poetry group or requirements file that is not needed to run."""
+    key = Path(str(name)).stem.lower().replace("_", "-")
+    parts = [part for part in key.split("-") if part]
+    return any(part in _DEV_REQUIREMENT_PARTS for part in parts)
+
+
+def runtime_requirement_files(root: Path) -> List[Path]:
+    """Requirement files that describe how to run the program.
+
+    The project root ``requirements.txt`` counts. So does a runtime file
+    inside ``requirements/`` or ``requirement/``. Dev and test lists do not.
+    """
+    root = Path(root)
+    files: List[Path] = []
+    root_file = root / "requirements.txt"
+    if root_file.is_file():
+        files.append(root_file)
+    for folder_name in ("requirements", "requirement"):
+        folder = root / folder_name
+        if not folder.is_dir():
+            continue
+        for path in sorted(folder.glob("*.txt")):
+            if path.name.lower() in _RUNTIME_REQUIREMENT_NAMES and not _is_dev_extra(path.name):
+                files.append(path)
+    return files
+
+
+def _read_requirement_file(path: Path, source: str) -> Tuple[List[Requirement], List[Skipped]]:
     requirements: List[Requirement] = []
     skipped: List[Skipped] = []
     try:
@@ -261,11 +294,48 @@ def _requirements_txt(root: Path) -> Tuple[List[Requirement], List[Skipped]]:
     except OSError:
         return [], []
     for line in text.splitlines():
-        requirement, skip = _parse_requirement_line(line, "requirements.txt")
+        requirement, skip = _parse_requirement_line(line, source)
         if requirement is not None:
             requirements.append(requirement)
         elif skip is not None:
             skipped.append(skip)
+    return requirements, skipped
+
+
+def _file_pulls_other_files(path: Path) -> bool:
+    """True when pip would open another file, which might be a dev list."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    for line in text.splitlines():
+        stripped = line.split("#", 1)[0].strip()
+        if stripped.startswith(("-r", "--requirement", "-c", "--constraint")):
+            return True
+    return False
+
+
+def _requirements_txt(root: Path) -> Tuple[List[Requirement], List[Skipped]]:
+    """Read the runtime requirement files, and record the ones left out."""
+    requirements: List[Requirement] = []
+    skipped: List[Skipped] = []
+    for path in runtime_requirement_files(root):
+        source = path.relative_to(root).as_posix()
+        found, left_out = _read_requirement_file(path, source)
+        requirements.extend(found)
+        skipped.extend(left_out)
+    for folder_name in ("requirements", "requirement"):
+        folder = root / folder_name
+        if not folder.is_dir():
+            continue
+        for path in sorted(folder.glob("*.txt")):
+            if path in runtime_requirement_files(root):
+                continue
+            skipped.append(Skipped(
+                path.name,
+                "it is not part of what the program needs to run, so it is not installed",
+                path.relative_to(root).as_posix(),
+            ))
     return requirements, skipped
 
 
@@ -283,12 +353,24 @@ def _poetry_requirements(root: Path) -> Tuple[List[Requirement], List[Skipped]]:
     main = poetry.get("dependencies")
     if isinstance(main, dict):
         groups.append(main)
-    for group in (poetry.get("group") or {}).values():
-        if isinstance(group, dict) and isinstance(group.get("dependencies"), dict):
-            groups.append(group["dependencies"])
-
     requirements: List[Requirement] = []
     skipped: List[Skipped] = []
+    for group_name, group in (poetry.get("group") or {}).items():
+        if not isinstance(group, dict) or not isinstance(group.get("dependencies"), dict):
+            continue
+        # dev, test, and ci groups are for developing the program, not running it.
+        if _is_dev_extra(str(group_name)):
+            for name in group["dependencies"]:
+                if str(name).strip().lower() == "python":
+                    continue
+                skipped.append(Skipped(
+                    str(name),
+                    "it is a development dependency and is not needed to run the program",
+                    f"pyproject.toml [tool.poetry.group.{group_name}]",
+                ))
+            continue
+        groups.append(group["dependencies"])
+
     for group in groups:
         for name, spec in group.items():
             if str(name).strip().lower() == "python":
@@ -366,12 +448,22 @@ def _pep621_requirements(root: Path) -> Tuple[List[Requirement], List[Skipped]]:
     dependencies = project.get("dependencies")
     if isinstance(dependencies, list):
         lines.extend(str(line) for line in dependencies)
-    for group in (project.get("optional-dependencies") or {}).values():
-        if isinstance(group, list):
-            lines.extend(str(line) for line in group)
 
     requirements: List[Requirement] = []
     skipped: List[Skipped] = []
+    # Optional extras are installed only when someone asks for them.
+    for group_name, group in (project.get("optional-dependencies") or {}).items():
+        if not isinstance(group, list):
+            continue
+        for line in group:
+            requirement, _skip = _parse_requirement_line(str(line), f"pyproject.toml [project.optional-dependencies.{group_name}]")
+            label = requirement.name if requirement is not None else str(line).strip()
+            if label:
+                skipped.append(Skipped(
+                    label,
+                    "it is an optional extra and is not needed to run the program",
+                    f"pyproject.toml [project.optional-dependencies.{group_name}]",
+                ))
     for line in lines:
         requirement, skip = _parse_requirement_line(line, "pyproject.toml [project]")
         if requirement is not None:
@@ -400,6 +492,28 @@ def declared_requirements(root: Path) -> Declared:
         if key not in unique:
             unique[key] = requirement
     return Declared(requirements=list(unique.values()), skipped=skipped)
+
+
+def install_arguments(root: Path) -> List[str]:
+    """The pip arguments that install what the program needs to run.
+
+    A requirements file is passed with ``-r`` when it does not point at
+    another file. Development lists and optional extras are omitted.
+    """
+    root = Path(root)
+    arguments: List[str] = []
+    used_sources = set()
+    for path in runtime_requirement_files(root):
+        source = path.relative_to(root).as_posix()
+        if _file_pulls_other_files(path):
+            continue
+        arguments.extend(["-r", source])
+        used_sources.add(source)
+    for requirement in declared_requirements(root).requirements:
+        if requirement.source in used_sources:
+            continue
+        arguments.append(requirement.to_pip())
+    return arguments
 
 
 # --------------------------------------------------------------------------- #
@@ -484,17 +598,47 @@ def importable_names(site_dirs: Iterable[Path]) -> Set[str]:
     return names
 
 
+# A child folder with its own manifest is a different program. Sherlock's
+# ``.actor`` tree imports packages Sherlock itself does not use.
+_NESTED_PROJECT_MARKERS = (
+    "package.json", "go.mod", "pyproject.toml", "requirements.txt", "Pipfile",
+    "Cargo.toml", "composer.json", "Gemfile", "pom.xml", "build.gradle",
+    "build.gradle.kts", "Package.swift", "setup.py",
+)
+
+
+def _is_separate_project(path: Path) -> bool:
+    return any((path / name).is_file() for name in _NESTED_PROJECT_MARKERS)
+
+
 # --------------------------------------------------------------------------- #
 # The project's own source
 # --------------------------------------------------------------------------- #
 def _python_files(root: Path) -> List[Path]:
-    """Every Python file in the project, except the ones that are not source."""
+    """Python files that belong to this program.
+
+    Environment folders, hidden folders, and a child program with its own
+    manifest are left out.
+    """
     found: List[Path] = []
-    for path in Path(root).rglob("*.py"):
-        parts = set(path.relative_to(root).parts[:-1])
-        if parts & SKIP_DIRECTORIES:
-            continue
-        found.append(path)
+
+    def walk(here: Path) -> None:
+        try:
+            entries = list(here.iterdir())
+        except OSError:
+            return
+        for entry in entries:
+            if entry.is_dir():
+                name = entry.name
+                if name in SKIP_DIRECTORIES or name.startswith("."):
+                    continue
+                if _is_separate_project(entry):
+                    continue
+                walk(entry)
+            elif entry.suffix == ".py":
+                found.append(entry)
+
+    walk(Path(root))
     return found
 
 
@@ -582,15 +726,19 @@ def scan_imports(
     root: Path,
     available: Set[str],
     declared: Optional[Set[str]] = None,
+    accepted: Optional[Set[str]] = None,
 ) -> ImportScan:
     """Read a project's imports and work out what is missing.
 
     ``available`` is the set of names that can be imported right now. A name
-    the project provides itself is never missing.
+    the project provides itself is never missing. ``accepted`` names are
+    declared on purpose as development or optional packages, so a test
+    import is not reported as something the program needs.
     """
     root = Path(root)
     available = set(available or ())
     declared = {normalize_name(name) for name in (declared or set())}
+    accepted = {normalize_name(name) for name in (accepted or set())}
     stdlib = _stdlib_names()
     local = _local_names(root)
     project_names = _project_module_names(root)
@@ -604,12 +752,18 @@ def scan_imports(
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    _check_absolute(root, path, node, alias.name, available, declared, stdlib, local, project_names, scan)
+                    _check_absolute(
+                        root, path, node, alias.name, available, declared, accepted,
+                        stdlib, local, project_names, scan,
+                    )
             elif isinstance(node, ast.ImportFrom):
                 if node.level:
                     _check_relative(root, path, node, scan)
                 elif node.module:
-                    _check_absolute(root, path, node, node.module, available, declared, stdlib, local, project_names, scan)
+                    _check_absolute(
+                        root, path, node, node.module, available, declared, accepted,
+                        stdlib, local, project_names, scan,
+                    )
     return scan
 
 
@@ -620,6 +774,7 @@ def _check_absolute(
     dotted: str,
     available: Set[str],
     declared: Set[str],
+    accepted: Set[str],
     stdlib: Set[str],
     local: Set[str],
     project_names: Set[str],
@@ -630,6 +785,8 @@ def _check_absolute(
     if not top:
         return
     if top in stdlib or top in available:
+        return
+    if normalize_name(top) in accepted or normalize_name(package_for_module(top)) in accepted:
         return
     if top in local:
         # The project's own package: the file it names has to be there.

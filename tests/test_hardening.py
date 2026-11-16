@@ -22,7 +22,7 @@ from core.setup import Setup  # noqa: E402
 def _client(token: bool = True):
     # base_url must be an allowed host: TrustedHostMiddleware rejects "testserver".
     headers = {"x-setup-token": webapp.API_TOKEN} if token else {}
-    return TestClient(app, base_url="http://127.0.0.1", headers=headers)
+    return TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000), headers=headers)
 
 
 @pytest.fixture
@@ -57,10 +57,36 @@ def test_the_dashboards_own_origin_is_trusted():
     assert r.status_code == 200, r.text
 
 
-def test_a_vscode_webview_is_still_trusted():
-    """The extensions that embed the dashboard cannot be given a token."""
+def test_a_vscode_webview_origin_is_not_trusted():
+    """Any webview can claim this origin, so it must not replace the token."""
     r = _client(token=False).get("/api/config", headers={"Origin": "vscode-webview://abc"})
-    assert r.status_code == 200, r.text
+    assert r.status_code in (401, 403), r.text
+    r = _client(token=False).get("/api/config", headers={"Origin": "vscode-webview://abc", "Host": "127.0.0.1"})
+    assert r.status_code in (401, 403), r.text
+
+
+def test_a_vscode_webview_with_the_token_still_needs_a_matching_origin():
+    r = _client().get("/api/config", headers={"Origin": "vscode-webview://abc"})
+    assert r.status_code == 403, r.text
+
+
+def test_only_this_machine_may_connect():
+    for peer in ("192.168.1.20", "10.0.0.5", "testclient"):
+        c = TestClient(app, base_url="http://127.0.0.1", client=(peer, 50000), headers={"x-setup-token": webapp.API_TOKEN})
+        assert c.get("/api/config").status_code == 403, peer
+        assert c.get("/").status_code == 403, peer
+    for peer in ("127.0.0.1", "::1"):
+        c = TestClient(app, base_url="http://127.0.0.1", client=(peer, 50000), headers={"x-setup-token": webapp.API_TOKEN})
+        assert c.get("/api/config").status_code == 200, peer
+
+
+def test_the_log_socket_refuses_other_machines():
+    from starlette.websockets import WebSocketDisconnect
+
+    c = TestClient(app, base_url="http://127.0.0.1", client=("192.168.1.20", 50000))
+    with pytest.raises(WebSocketDisconnect):
+        with c.websocket_connect(f"/ws/logs/x?token={webapp.API_TOKEN}") as ws:
+            ws.receive_text()
 
 
 def test_the_token_is_always_required_for_ordinary_requests():

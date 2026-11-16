@@ -21,7 +21,10 @@ if str(ROOT) not in sys.path:
 #: A temporary directory that stands in for C:\\dev during the tests.
 SAFE_ROOT = Path(tempfile.mkdtemp(prefix="setup-manager-tests-"))
 os.environ["SETUP_MANAGER_SAFE_ROOT"] = str(SAFE_ROOT)
+os.environ["SETUP_MANAGER_SETTINGS_FILE"] = str(SAFE_ROOT / "settings-test.json")
 os.environ["SETUP_MANAGER_TASKS_DB"] = str(SAFE_ROOT / "tasks-test.db")
+# The real watch reads this PC. Tests call the checker with made-up names.
+os.environ["SETUP_MANAGER_FILE_WATCH"] = "0"
 
 
 class _HealthHandler(BaseHTTPRequestHandler):
