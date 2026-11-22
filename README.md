@@ -51,6 +51,28 @@ You can also put a shortcut on your Desktop with `create_shortcut.py`.
 
 ## First run
 
+Setup Manager keeps your projects in a `Projects` folder inside your user
+folder, for example `C:\Users\You\Projects`. The first time you start it,
+that folder is created if it is not there yet. The dashboard, `run.bat`
+and the desktop shortcut all use this same folder.
+
+It will not use your whole home folder, and it will not use the folder
+the zip was unpacked in (Downloads or Desktop). The `run.bat` window
+prints the folder it is using.
+
+To use a different folder:
+
+1. Create `run.local.bat` next to `run.bat` (this file stays on your PC), or
+2. In the dashboard, paste the folder into the path box and click **Set as projects root**.
+
+```bat
+@echo off
+if not defined SETUP_MANAGER_SAFE_ROOT set SETUP_MANAGER_SAFE_ROOT=C:\Users\You\SomeFolder
+```
+
+If that folder is missing, or it is one Setup Manager is not allowed to use,
+it says so and keeps using `Projects` so the program still opens.
+
 The dashboard prefers [http://127.0.0.1:8010](http://127.0.0.1:8010) and
 only listens on this computer. If 8010 is busy, it uses the next free port
 in the range 8010-8099 and says so in the `run.bat` window. If Setup
@@ -72,9 +94,10 @@ is not running, Setup Manager still works; the pill will say
 
 ## Projects folder (safe root)
 
-Setup Manager will only open project folders inside a safe root. The
-default is a `Projects` folder in your user profile. You can change it in
-the dashboard (**Set as projects root**), or with the
+Setup Manager will only open project folders inside one safe folder. The
+shortcut, `run.bat` and the dashboard agree on which folder that is. The
+default is `Projects` in your user profile, and it is created if needed.
+You can change it in the dashboard (**Set as projects root**), or with the
 `SETUP_MANAGER_SAFE_ROOT` environment variable.
 
 `run.local.bat` is the local-only place to set that variable. It is listed
@@ -87,8 +110,8 @@ REM Personal settings for this PC. Not shared (see .gitignore).
 if not defined SETUP_MANAGER_SAFE_ROOT set SETUP_MANAGER_SAFE_ROOT=C:\Users\You\Projects
 ```
 
-A whole drive, your home folder itself, Windows, and Program Files are
-refused as the projects root.
+A whole drive, your home folder itself, Downloads, Desktop, Windows, and
+Program Files are refused as the projects root.
 
 ## Tests
 

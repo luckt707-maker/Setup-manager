@@ -273,7 +273,8 @@ def _parse_requirement_line(line: str, source: str) -> Tuple[Optional[Requiremen
 # folder often also holds dev, test, and docs lists; those are not installed.
 _RUNTIME_REQUIREMENT_NAMES = {
     "base.txt", "prod.txt", "production.txt", "main.txt", "runtime.txt",
-    "default.txt", "requirements.txt", "app.txt",
+    "default.txt", "requirements.txt", "app.txt", "common.txt", "shared.txt",
+    "install.txt", "packages.txt", "dependencies.txt", "deps.txt", "run.txt",
 }
 _DEV_REQUIREMENT_PARTS = ("dev", "develop", "development", "test", "tests", "testing", "doc", "docs", "ci", "lint", "style", "optional", "extra")
 
@@ -539,13 +540,30 @@ def install_arguments(root: Path) -> List[str]:
 # --------------------------------------------------------------------------- #
 # What is installed
 # --------------------------------------------------------------------------- #
+def _looks_like_venv(folder: Path) -> bool:
+    """True when the folder really holds a Python environment."""
+    if (folder / "pyvenv.cfg").is_file():
+        return True
+    if (folder / "Scripts" / "python.exe").is_file():
+        return True
+    return (folder / "bin" / "python").is_file() or (folder / "bin" / "python3").is_file()
+
+
 def find_venv(root: Path) -> Optional[Path]:
-    """The project's own virtual environment, if it has one."""
+    """The project's own virtual environment, if it has one.
+
+    ``venv`` and ``.venv`` are the usual names. ``env`` and ``.env`` are
+    only counted when they actually contain Python, because a folder with
+    one of those names is often just a place for settings.
+    """
     root = Path(root)
     for name in ("venv", ".venv", "env", ".env"):
         candidate = root / name
-        if candidate.is_dir():
-            return candidate
+        if not candidate.is_dir():
+            continue
+        if name in {"env", ".env"} and not _looks_like_venv(candidate):
+            continue
+        return candidate
     return None
 
 

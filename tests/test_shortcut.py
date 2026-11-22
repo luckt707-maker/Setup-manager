@@ -43,26 +43,37 @@ def test_the_shortcut_points_at_the_app_and_works_from_the_app_folder(tmp_path):
 
 
 def test_the_shortcut_opens_the_dashboard_and_allows_the_projects_root(tmp_path, monkeypatch):
-    """A double-click should open the UI and know which folder it may touch."""
+    """A double-click uses the Projects folder, not the folder the zip was unpacked in."""
+    from core.settings import settings_manager
+
+    settings_manager.set("paths", "safe_root", "")
     monkeypatch.delenv("SETUP_MANAGER_SAFE_ROOT", raising=False)
-    root = tmp_path / "SetupManagerv2"
-    root.mkdir()
+    projects = tmp_path / "Projects"
+    monkeypatch.setattr("core.settings.default_projects_folder", lambda: projects)
+    root = tmp_path / "Downloads" / "SetupManagerv2"
+    root.mkdir(parents=True)
 
     spec = shortcut_spec(root, python_exe="python.exe")
 
     assert "--auto-open" in spec["arguments"]
-    assert f'--safe-root "{tmp_path}"' in spec["arguments"]
+    assert f'--safe-root "{projects.resolve()}"' in spec["arguments"]
+    assert "Downloads" not in spec["arguments"].split("--safe-root", 1)[-1]
 
 
 def test_an_explicit_safe_root_wins(tmp_path, monkeypatch):
     """A configured safe root must not be overwritten by the shortcut."""
-    monkeypatch.setenv("SETUP_MANAGER_SAFE_ROOT", r"D:\other")
+    from core.settings import settings_manager
+
+    settings_manager.set("paths", "safe_root", "")
+    chosen = tmp_path / "other"
+    chosen.mkdir()
+    monkeypatch.setenv("SETUP_MANAGER_SAFE_ROOT", str(chosen))
     root = tmp_path / "SetupManagerv2"
     root.mkdir()
 
     spec = shortcut_spec(root, python_exe="python.exe")
 
-    assert f'--safe-root "{r"D:\other"}"' in spec["arguments"]
+    assert f'--safe-root "{chosen.resolve()}"' in spec["arguments"]
 
 
 def test_the_shortcut_needs_no_environment_block(tmp_path):

@@ -166,6 +166,42 @@ def test_a_pep621_project_declares_its_packages(tmp_path):
     assert by_name["requests"].specifier == ">=2.22.0"
 
 
+def test_a_common_requirements_file_is_installed(tmp_path):
+    """requirements.txt that only says '-r requirements/common.txt' still installs."""
+    project = _project(tmp_path, {
+        "requirements.txt": "-r requirements/common.txt\n",
+        "requirements/common.txt": "requests>=2.22.0\n",
+        "requirements/dev.txt": "pytest\n",
+        "requirements/docs.txt": "sphinx\n",
+    })
+
+    from core.dependencies import install_arguments
+
+    declared = declared_requirements(project)
+    arguments = install_arguments(project)
+
+    assert "requests" in declared.names()
+    assert "pytest" not in declared.names()
+    assert "sphinx" not in declared.names()
+    assert "requirements/common.txt" in arguments
+    assert "dev.txt" not in " ".join(arguments)
+    assert "docs.txt" not in " ".join(arguments)
+
+
+def test_an_env_folder_without_python_is_not_a_virtual_environment(tmp_path):
+    """A settings folder named env or .env is not where packages go."""
+    from core.dependencies import find_venv
+
+    project = _project(tmp_path, {})
+    (project / "env").mkdir()
+    (project / ".env").mkdir()
+    assert find_venv(project) is None
+
+    real = project / "env"
+    (real / "pyvenv.cfg").write_text("home = somewhere\n", encoding="utf-8")
+    assert find_venv(project) == real
+
+
 def test_a_requirements_folder_installs_only_the_runtime_list(tmp_path):
     """dev.txt and test.txt sit beside base.txt and must not be downloaded."""
     project = _project(tmp_path, {
