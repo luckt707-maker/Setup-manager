@@ -5,6 +5,11 @@ to find where it actually is rather than assuming.
 """
 import pytest
 
+pytest.importorskip(
+    "tkinter",
+    reason="The terminal menu needs tkinter, which this Python does not include.",
+)
+
 from core import cli
 from core.server_state import write_state
 

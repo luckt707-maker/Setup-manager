@@ -175,6 +175,26 @@ def test_choose_port_reuses_a_running_instance_on_the_pinned_port(live_server):
     assert running == f"http://127.0.0.1:{live_server}"
 
 
+def test_choose_port_refuses_a_number_that_is_not_a_port():
+    """0 and 70000 are not ports the dashboard can listen on."""
+    for number in (0, -1, 70000):
+        with pytest.raises(RuntimeError, match="not a usable port"):
+            server_state.choose_port(explicit=number, scan_from=40000, scan_to=40100)
+
+
+def test_a_blank_or_nonsense_port_setting_is_explained():
+    """An empty value means 'pick one'. Words are a mistake to explain."""
+    assert server_state.read_port_setting(None) is None
+    assert server_state.read_port_setting("  ") is None
+    assert server_state.read_port_setting("8010") == 8010
+    with pytest.raises(ValueError, match="not a port number"):
+        server_state.read_port_setting("abc")
+    with pytest.raises(ValueError, match="not a usable port"):
+        server_state.read_port_setting("0")
+    with pytest.raises(ValueError, match="not a usable port"):
+        server_state.read_port_setting("70000")
+
+
 def test_choose_port_refuses_a_pinned_port_taken_by_something_else(a_busy_port):
     with pytest.raises(RuntimeError):
         server_state.choose_port(explicit=a_busy_port, scan_from=40000, scan_to=40100)

@@ -72,6 +72,10 @@ class SettingsManager:
             if self.settings_path.exists():
                 with open(self.settings_path, "r", encoding="utf-8") as f:
                     user_settings = json.load(f)
+                if not isinstance(user_settings, dict):
+                    # "null", a list, or a single word is valid JSON and still
+                    # not a settings file. Keep the file and use the defaults.
+                    raise ValueError("settings file is not an object")
                 # Deep merge with defaults
                 self._settings = self._deep_merge(DEFAULT_SETTINGS, user_settings)
                 logger.info("Loaded settings from %s", self.settings_path)
@@ -79,7 +83,7 @@ class SettingsManager:
                 self._settings = copy.deepcopy(DEFAULT_SETTINGS)
                 self.save()
                 logger.info("Created default settings at %s", self.settings_path)
-        except (json.JSONDecodeError, OSError) as e:
+        except (json.JSONDecodeError, OSError, TypeError, ValueError) as e:
             logger.error("Failed to load settings: %s. Using defaults.", e)
             self._settings = copy.deepcopy(DEFAULT_SETTINGS)
         return self._settings
@@ -105,6 +109,10 @@ class SettingsManager:
             The setting value or default.
         """
         category_data = self._settings.get(category, {})
+        if not isinstance(category_data, dict):
+            # A hand-edited file can put a word where a group of settings
+            # belongs. Treat that group as missing instead of crashing.
+            return {} if key is None else default
         if key is None:
             return category_data
         return category_data.get(key, default)
@@ -117,9 +125,7 @@ class SettingsManager:
             key: Key within the category.
             value: Value to set.
         """
-        if category not in self._settings:
-            self._settings[category] = {}
-        self._settings[category][key] = value
+        self._ensure_category(category)[key] = value
         self.save()
 
     def update_category(self, category: str, updates: Dict[str, Any]) -> None:
@@ -129,9 +135,7 @@ class SettingsManager:
             category: Settings category.
             updates: Dictionary of key-value pairs to update.
         """
-        if category not in self._settings:
-            self._settings[category] = {}
-        self._settings[category].update(updates)
+        self._ensure_category(category).update(updates)
         self.save()
 
     def reset(self, category: Optional[str] = None) -> None:
@@ -147,6 +151,15 @@ class SettingsManager:
             self._settings = copy.deepcopy(DEFAULT_SETTINGS)
         self.save()
         logger.info("Settings reset to defaults")
+
+    def _ensure_category(self, category: str) -> Dict[str, Any]:
+        """The group of settings for ``category``, repaired if it was damaged."""
+        current = self._settings.get(category)
+        if isinstance(current, dict):
+            return current
+        repaired = dict(DEFAULT_SETTINGS.get(category) or {})
+        self._settings[category] = repaired
+        return repaired
 
     def all_settings(self) -> Dict[str, Any]:
         """Return all current settings."""

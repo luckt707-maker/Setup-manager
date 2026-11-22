@@ -51,6 +51,26 @@ def make_installed(monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda name: "C:/tools/make.exe" if name == "make" else None)
 
 
+def test_the_install_line_quotes_a_folder_with_spaces(tmp_path):
+    """C:\\Users\\First Last\\… must stay one path, not three words."""
+    project = tmp_path / "My Project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\n'
+        "dependencies = [\"colorama>=0.4.6; platform_system == 'Windows'\"]\n",
+        encoding="utf-8",
+    )
+    scripts = project / "venv" / ("Scripts" if sys.platform == "win32" else "bin")
+    scripts.mkdir(parents=True)
+    python = scripts / ("python.exe" if sys.platform == "win32" else "python")
+    python.write_text("", encoding="utf-8")
+
+    command = ProjectOrchestrator(str(project)).diagnose()["install_commands"][0]["command"]
+
+    assert f'"{python}"' in command
+    assert "platform_system == 'Windows'" in command
+
+
 def test_a_python_program_is_not_reported_as_node_or_docker(tmp_path):
     """Sherlock has a package.json and a Dockerfile. Neither is how it runs."""
     project = _project(tmp_path, {

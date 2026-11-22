@@ -206,10 +206,16 @@ def poetry_constraint(spec: str) -> Optional[str]:
         return _caret_range(text[1:].strip())
     if text.startswith(_TILDE):
         return _tilde_range(text[1:].strip())
-    if text.startswith("="):
-        return "==" + text[1:].strip()
     if text.startswith((">=", "<=", "!=", ">", "<", ",")):
         return text
+    if text.startswith("="):
+        # Poetry writes '=', and a copied pip line may say '=='. Both mean
+        # "exactly this version". Stripping every '=' avoids turning '==1'
+        # into '===1', which pip refuses.
+        version = text.lstrip("=").strip()
+        if version[:1].isdigit():
+            return "==" + version
+        return None
     if _VERSION_RE.match(text):
         return f"=={text}"
     if text.endswith(".*"):
@@ -238,14 +244,28 @@ def _parse_requirement_line(line: str, source: str) -> Tuple[Optional[Requiremen
     if text.startswith("-"):
         name = text.split()[0]
         return None, Skipped(name, "it is not a plain package name (an option or a reference)", source)
-    name_part, _, spec = text.partition(";")
+    name_part, _, marker = text.partition(";")
     match = _REQUIREMENT_RE.match(name_part.strip())
     if not match:
         return None, Skipped(name_part.strip() or text, "the name could not be read", source)
     name = match.group("name")
     extras = tuple(part.strip() for part in (match.group("extras") or "").split(",") if part.strip())
-    specifier = (match.group("spec") or "").strip() + ("," + spec.strip() if spec.strip() else "")
-    specifier = re.sub(r"\s+", "", specifier)
+    raw_spec = (match.group("spec") or "").strip()
+    # 'name @ https://…' is a download address. The spaces are required.
+    # Dropping them makes pip reject the whole install, so this is left out
+    # and explained, the same way a Poetry URL dependency is.
+    if raw_spec.startswith("@") or "://" in raw_spec:
+        return None, Skipped(
+            name,
+            "it comes from a URL, so it is not installed from the package index",
+            source,
+        )
+    specifier = re.sub(r"\s+", "", raw_spec)
+    marker = marker.strip()
+    if marker:
+        # The text after ';' is an environment marker ('only on Windows'),
+        # not another version. A comma makes pip reject the line.
+        specifier = f"{specifier}; {marker}" if specifier else f"; {marker}"
     return Requirement(name=name, specifier=specifier, source=source, extras=extras), None
 
 

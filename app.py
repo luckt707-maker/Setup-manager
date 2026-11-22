@@ -101,6 +101,7 @@ from core.server_state import (
     choose_port,
     clear_state,
     port_range,
+    read_port_setting,
     write_state,
 )
 from doctor import (
@@ -134,7 +135,22 @@ _file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s
 logging.getLogger().addHandler(_file_handler)
 
 APP_HOST = os.getenv("SETUP_MANAGER_HOST", "127.0.0.1")
-APP_PORT = int(os.getenv("SETUP_MANAGER_PORT", "8010"))
+
+
+def _port_at_import() -> int:
+    """A usable port for import time. A bad setting must not crash the import.
+
+    Starting the program (see the bottom of this file) still stops and
+    explains the mistake. Other tools that only import the app keep working.
+    """
+    try:
+        chosen = read_port_setting(os.getenv("SETUP_MANAGER_PORT"))
+    except ValueError:
+        return 8010
+    return 8010 if chosen is None else chosen
+
+
+APP_PORT = _port_at_import()
 
 # Ollama / Qwen assistant tuning (see ollama_client.py for env defaults)
 AI_TEMPERATURE = float(os.getenv("SETUP_MANAGER_AI_TEMPERATURE", "0.2"))
@@ -3221,9 +3237,13 @@ if __name__ == "__main__":
     # be holding it. In that case we move up to the next free port, unless the
     # holder is a Setup Manager already - then we open that one instead of
     # starting a second.
-    pinned = os.getenv("SETUP_MANAGER_PORT")
     try:
-        APP_PORT, already_running = choose_port(explicit=int(pinned) if pinned else None)
+        pinned = read_port_setting(os.getenv("SETUP_MANAGER_PORT"))
+    except ValueError as exc:
+        print(f"❌ ERROR: {exc}")
+        sys.exit(1)
+    try:
+        APP_PORT, already_running = choose_port(explicit=pinned)
     except RuntimeError as exc:
         print(f"❌ ERROR: {exc}")
         sys.exit(1)

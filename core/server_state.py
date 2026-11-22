@@ -64,6 +64,30 @@ def state_path() -> Path:
     return Path(__file__).resolve().parent.parent / "logs" / "server.json"
 
 
+def read_port_setting(raw: Optional[str]) -> Optional[int]:
+    """The port in a setting, or None when the setting is blank.
+
+    A blank value means "pick a free port". Anything else that is not a
+    number from 1 to 65535 is a mistake, and the message says so.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+    try:
+        port = int(text)
+    except ValueError:
+        raise ValueError(
+            f"SETUP_MANAGER_PORT is {text!r}, which is not a port number. "
+            "Use a number from 1 to 65535, or remove it to let Setup Manager pick a free port."
+        ) from None
+    if not 1 <= port <= 65535:
+        raise ValueError(
+            f"SETUP_MANAGER_PORT is {port}, which is not a usable port. "
+            "Use a number from 1 to 65535, or remove it to let Setup Manager pick a free port."
+        )
+    return port
+
+
 def is_port_free(port: int, host: str = "127.0.0.1") -> bool:
     """True when nothing is listening on the given local port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -195,6 +219,11 @@ def choose_port(
 
     if explicit is not None:
         port = int(explicit)
+        if not 1 <= port <= 65535:
+            raise RuntimeError(
+                f"Port {port} is not a usable port. "
+                "Use a number from 1 to 65535, or leave the port unset to pick a free one."
+            )
         if is_port_free(port, host):
             return port, None
         if is_setup_manager(port, host):

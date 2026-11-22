@@ -309,15 +309,16 @@ def test_missing_tool_is_reported_as_a_skip():
 
 
 def test_availability_probe_asks_the_interpreter_not_the_path():
-    """`<venv python> -m tool` is available only if the module is importable.
+    """`<python> -m tool` is available only if the module is importable.
 
     The interpreter is always present, so a PATH check would wrongly report
-    every Python tool as installed.
+    every Python tool as installed. A project with no virtual environment
+    has no interpreter of its own; the probe still has to be given a real one.
     """
     setup = Setup(".")
-    python = str(setup._venv_python())
-    assert setup._check_available([python, "-m", "pytest"]) is True
-    assert setup._check_available([python, "-m", "a_module_that_is_not_installed"]) is False
+    assert setup._venv_python() is None
+    assert setup._check_available([sys.executable, "-m", "pytest"]) is True
+    assert setup._check_available([sys.executable, "-m", "a_module_that_is_not_installed"]) is False
 
 
 def test_executor_reports_the_exit_code():
