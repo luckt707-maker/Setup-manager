@@ -34,10 +34,15 @@ def test_the_default_folder_is_created_in_the_user_profile(tmp_path, monkeypatch
     monkeypatch.delenv("SETUP_MANAGER_SAFE_ROOT", raising=False)
 
     folder = projects_root()
+    # Startup creates the folder. The dashboard asks again after that.
+    again = projects_root()
 
-    assert folder == (home / "Projects").resolve()
+    assert folder == again == (home / "Projects").resolve()
     assert folder.is_dir()
     assert any("Created" in note for note in projects_root_notes())
+    body = _client().get("/api/config", headers=H).json()
+    assert "Created" in body["root_note"]
+    assert body["root_warning"] is False
 
 
 def test_the_home_folder_itself_falls_back_to_projects(tmp_path, monkeypatch):

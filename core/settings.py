@@ -193,6 +193,11 @@ settings_manager = SettingsManager()
 # Notes from the last time the projects folder was chosen, so the dashboard
 # can show them after the console window has already moved on.
 _root_notes: list = []
+# The "Created …" sentence is true only on the call that makes the folder.
+# Startup does that before the page loads, so the sentence is remembered
+# until the dashboard asks, and only while that same folder is in use.
+_created_note = ""
+_created_for = ""
 
 
 def default_projects_folder() -> Path:
@@ -313,7 +318,7 @@ def ensure_projects_root() -> Path:
     When nothing valid is set, the Projects folder in the home directory
     is created if it is not there yet.
     """
-    global _root_notes
+    global _root_notes, _created_note, _created_for
     notes = []
     chosen = None
     for label, raw in _configured_roots():
@@ -349,11 +354,15 @@ def ensure_projects_root() -> Path:
                 "Create that folder yourself, or set SETUP_MANAGER_SAFE_ROOT in run.local.bat."
             )
         else:
-            notes.append(
+            _created_for = _folded(chosen)
+            _created_note = (
                 f"Created {chosen} for your projects. "
                 "To use a different folder, set SETUP_MANAGER_SAFE_ROOT in run.local.bat, "
                 "or click Set as projects root in the dashboard."
             )
+            notes.append(_created_note)
+    if _created_note and _created_for == _folded(chosen) and _created_note not in notes:
+        notes.insert(0, _created_note)
     _root_notes = notes
     return chosen
 
