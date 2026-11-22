@@ -312,10 +312,10 @@ def test_availability_probe_asks_the_interpreter_not_the_path():
     """`<python> -m tool` is available only if the module is importable.
 
     The interpreter is always present, so a PATH check would wrongly report
-    every Python tool as installed. A project with no virtual environment
-    has no interpreter of its own; the probe still has to be given a real one.
+    every Python tool as installed. The empty folder is a project with no
+    environment of its own, including when this checkout has a venv.
     """
-    setup = Setup(".")
+    setup = Setup(str(_proj("no-venv", {})))
     assert setup._venv_python() is None
     assert setup._check_available([sys.executable, "-m", "pytest"]) is True
     assert setup._check_available([sys.executable, "-m", "a_module_that_is_not_installed"]) is False
