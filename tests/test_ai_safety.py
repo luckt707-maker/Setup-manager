@@ -321,10 +321,17 @@ def test_a_knowledge_file_cannot_replace_a_built_in_fix(tmp_path, monkeypatch):
     )  # built-in order is kept
 
 
-def test_knowledge_base_keeps_its_windows_line_endings():
-    """The original file uses CRLF; edits must not turn the whole diff into noise."""
+def test_knowledge_base_does_not_mix_line_endings():
+    """A mix of Windows and Unix line endings makes every later edit look huge.
+
+    The file may be all Unix endings or all Windows endings. It must not be both.
+    """
     data = Path(knowledge_base.__file__).read_bytes()
-    assert data.count(b"\n") == data.count(b"\r\n")
+    crlf = data.count(b"\r\n")
+    bare_lf = data.count(b"\n") - crlf
+    bare_cr = data.count(b"\r") - crlf
+    assert bare_cr == 0
+    assert not (crlf and bare_lf)
 
 
 def test_analyze_reports_a_folder_id_for_the_safety_reminder(project, tmp_path):

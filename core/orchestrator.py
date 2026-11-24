@@ -3,6 +3,7 @@ from typing import Any, Dict, List
 import json
 import os
 import shutil
+import subprocess
 
 from .dependencies import (
     declared_requirements,
@@ -248,7 +249,11 @@ class ProjectOrchestrator:
                     install_commands.append({
                         'label': 'Install Python dependencies',
                         'type': 'python',
-                        'command': python + ' -m pip install ' + ' '.join(requirements),
+                        # list2cmdline quotes a path that contains spaces, such
+                        # as C:\\Users\\First Last\\Projects\\app\\venv\\...
+                        'command': subprocess.list2cmdline(
+                            [python, '-m', 'pip', 'install', *requirements]
+                        ),
                     })
 
         if 'nodejs' in needed or 'typescript' in needed:

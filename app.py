@@ -93,7 +93,13 @@ from core.dependencies import declared_requirements, find_venv, normalize_name
 from core.privacy import check_this_pc
 from core.file_watch import WatchDisabled, runner as file_watch_runner
 from core.setup import source_retry_command
-from core.settings import allowed_project_roots, projects_root, settings_manager
+from core.settings import (
+    allowed_project_roots,
+    projects_root,
+    projects_root_notes,
+    root_problem,
+    settings_manager,
+)
 from core.where import find_programs
 from core.tooling import gradle_command, make_command
 from core.server_state import (
@@ -101,6 +107,7 @@ from core.server_state import (
     choose_port,
     clear_state,
     port_range,
+    read_port_setting,
     write_state,
 )
 from doctor import (
@@ -134,7 +141,22 @@ _file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s
 logging.getLogger().addHandler(_file_handler)
 
 APP_HOST = os.getenv("SETUP_MANAGER_HOST", "127.0.0.1")
-APP_PORT = int(os.getenv("SETUP_MANAGER_PORT", "8010"))
+
+
+def _port_at_import() -> int:
+    """A usable port for import time. A bad setting must not crash the import.
+
+    Starting the program (see the bottom of this file) still stops and
+    explains the mistake. Other tools that only import the app keep working.
+    """
+    try:
+        chosen = read_port_setting(os.getenv("SETUP_MANAGER_PORT"))
+    except ValueError:
+        return 8010
+    return 8010 if chosen is None else chosen
+
+
+APP_PORT = _port_at_import()
 
 # Ollama / Qwen assistant tuning (see ollama_client.py for env defaults)
 AI_TEMPERATURE = float(os.getenv("SETUP_MANAGER_AI_TEMPERATURE", "0.2"))
@@ -1183,6 +1205,11 @@ def api_config() -> Dict[str, Any]:
     return {
         "version": APP_VERSION,
         "safe_root": str(_safe_root()),
+        "root_note": " ".join(projects_root_notes()),
+        "root_warning": any(
+            "cannot" in note or "does not exist" in note or "Could not create" in note
+            for note in projects_root_notes()
+        ),
         "roots": [str(root) for root in allowed_project_roots()],
         "last_project": _last_project(),
         "allow_shell": ALLOW_SHELL,
@@ -1206,28 +1233,11 @@ class SafeRootRequest(BaseModel):
 
 
 def _check_new_safe_root(raw: str) -> Path:
-    """A projects root must be a real folder, and not a whole drive or Windows itself."""
-    if "\x00" in raw:
-        raise HTTPException(400, "Invalid path")
-    candidate = Path(raw).expanduser()
-    if not candidate.is_absolute():
-        raise HTTPException(400, "Use a full path, for example C:\\Users\\You\\Projects")
-    resolved = candidate.resolve()
-    if not resolved.is_dir():
-        raise HTTPException(400, f"Folder does not exist: {resolved}")
-    if resolved.parent == resolved:
-        raise HTTPException(400, "A whole drive cannot be the projects root; pick a folder on it")
-    blocked = [Path.home()]
-    if sys.platform == "win32":
-        blocked += [Path(os.environ.get("SystemRoot", r"C:\Windows"))]
-        blocked += [Path(os.environ[v]) for v in ("ProgramFiles", "ProgramFiles(x86)") if os.environ.get(v)]
-    else:
-        blocked += [Path(p) for p in ("/etc", "/usr", "/bin", "/sbin", "/var", "/boot", "/root")]
-    for item in blocked:
-        item = item.resolve()
-        if resolved == item or (item != Path.home().resolve() and resolved.is_relative_to(item)):
-            raise HTTPException(400, f"{resolved} cannot be the projects root")
-    return resolved
+    """A projects root must be a real folder, and not the home folder or Windows itself."""
+    problem = root_problem(raw)
+    if problem:
+        raise HTTPException(400, problem)
+    return Path(raw).expanduser().resolve()
 
 
 @app.post("/settings/safe-root")
@@ -1334,7 +1344,11 @@ def list_projects(q: str = Query("", max_length=100)) -> List[Dict[str, Any]]:
     """Immediate sub-folders of the safe root with their detected project types."""
     root = _safe_root()
     if not root.is_dir():
-        raise HTTPException(404, f"Safe root does not exist: {root}")
+        raise HTTPException(
+            400,
+            f"The projects folder is not there and could not be created: {root}. "
+            "Create it, or click Set as projects root and pick a folder that exists.",
+        )
     needle = q.strip().lower()
     items: List[Dict[str, Any]] = []
     for child in sorted(root.iterdir(), key=lambda p: p.name.lower()):
@@ -3214,6 +3228,12 @@ if __name__ == "__main__":
     if options.safe_root:
         os.environ["SETUP_MANAGER_SAFE_ROOT"] = options.safe_root
 
+    # The shortcut, run.bat and the dashboard all use this same choice.
+    folder = projects_root()
+    for line in projects_root_notes():
+        print(line)
+    print(f"Projects folder: {folder}")
+
     auto_open = options.auto_open or os.getenv("SETUP_MANAGER_AUTO_OPEN", "false").lower() == "true"
     headless = options.headless or "--no-gui" in sys.argv
 
@@ -3221,9 +3241,13 @@ if __name__ == "__main__":
     # be holding it. In that case we move up to the next free port, unless the
     # holder is a Setup Manager already - then we open that one instead of
     # starting a second.
-    pinned = os.getenv("SETUP_MANAGER_PORT")
     try:
-        APP_PORT, already_running = choose_port(explicit=int(pinned) if pinned else None)
+        pinned = read_port_setting(os.getenv("SETUP_MANAGER_PORT"))
+    except ValueError as exc:
+        print(f"❌ ERROR: {exc}")
+        sys.exit(1)
+    try:
+        APP_PORT, already_running = choose_port(explicit=pinned)
     except RuntimeError as exc:
         print(f"❌ ERROR: {exc}")
         sys.exit(1)

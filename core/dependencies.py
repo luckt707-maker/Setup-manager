@@ -206,10 +206,16 @@ def poetry_constraint(spec: str) -> Optional[str]:
         return _caret_range(text[1:].strip())
     if text.startswith(_TILDE):
         return _tilde_range(text[1:].strip())
-    if text.startswith("="):
-        return "==" + text[1:].strip()
     if text.startswith((">=", "<=", "!=", ">", "<", ",")):
         return text
+    if text.startswith("="):
+        # Poetry writes '=', and a copied pip line may say '=='. Both mean
+        # "exactly this version". Stripping every '=' avoids turning '==1'
+        # into '===1', which pip refuses.
+        version = text.lstrip("=").strip()
+        if version[:1].isdigit():
+            return "==" + version
+        return None
     if _VERSION_RE.match(text):
         return f"=={text}"
     if text.endswith(".*"):
@@ -238,14 +244,28 @@ def _parse_requirement_line(line: str, source: str) -> Tuple[Optional[Requiremen
     if text.startswith("-"):
         name = text.split()[0]
         return None, Skipped(name, "it is not a plain package name (an option or a reference)", source)
-    name_part, _, spec = text.partition(";")
+    name_part, _, marker = text.partition(";")
     match = _REQUIREMENT_RE.match(name_part.strip())
     if not match:
         return None, Skipped(name_part.strip() or text, "the name could not be read", source)
     name = match.group("name")
     extras = tuple(part.strip() for part in (match.group("extras") or "").split(",") if part.strip())
-    specifier = (match.group("spec") or "").strip() + ("," + spec.strip() if spec.strip() else "")
-    specifier = re.sub(r"\s+", "", specifier)
+    raw_spec = (match.group("spec") or "").strip()
+    # 'name @ https://…' is a download address. The spaces are required.
+    # Dropping them makes pip reject the whole install, so this is left out
+    # and explained, the same way a Poetry URL dependency is.
+    if raw_spec.startswith("@") or "://" in raw_spec:
+        return None, Skipped(
+            name,
+            "it comes from a URL, so it is not installed from the package index",
+            source,
+        )
+    specifier = re.sub(r"\s+", "", raw_spec)
+    marker = marker.strip()
+    if marker:
+        # The text after ';' is an environment marker ('only on Windows'),
+        # not another version. A comma makes pip reject the line.
+        specifier = f"{specifier}; {marker}" if specifier else f"; {marker}"
     return Requirement(name=name, specifier=specifier, source=source, extras=extras), None
 
 
@@ -253,7 +273,8 @@ def _parse_requirement_line(line: str, source: str) -> Tuple[Optional[Requiremen
 # folder often also holds dev, test, and docs lists; those are not installed.
 _RUNTIME_REQUIREMENT_NAMES = {
     "base.txt", "prod.txt", "production.txt", "main.txt", "runtime.txt",
-    "default.txt", "requirements.txt", "app.txt",
+    "default.txt", "requirements.txt", "app.txt", "common.txt", "shared.txt",
+    "install.txt", "packages.txt", "dependencies.txt", "deps.txt", "run.txt",
 }
 _DEV_REQUIREMENT_PARTS = ("dev", "develop", "development", "test", "tests", "testing", "doc", "docs", "ci", "lint", "style", "optional", "extra")
 
@@ -519,13 +540,30 @@ def install_arguments(root: Path) -> List[str]:
 # --------------------------------------------------------------------------- #
 # What is installed
 # --------------------------------------------------------------------------- #
+def _looks_like_venv(folder: Path) -> bool:
+    """True when the folder really holds a Python environment."""
+    if (folder / "pyvenv.cfg").is_file():
+        return True
+    if (folder / "Scripts" / "python.exe").is_file():
+        return True
+    return (folder / "bin" / "python").is_file() or (folder / "bin" / "python3").is_file()
+
+
 def find_venv(root: Path) -> Optional[Path]:
-    """The project's own virtual environment, if it has one."""
+    """The project's own virtual environment, if it has one.
+
+    ``venv`` and ``.venv`` are the usual names. ``env`` and ``.env`` are
+    only counted when they actually contain Python, because a folder with
+    one of those names is often just a place for settings.
+    """
     root = Path(root)
     for name in ("venv", ".venv", "env", ".env"):
         candidate = root / name
-        if candidate.is_dir():
-            return candidate
+        if not candidate.is_dir():
+            continue
+        if name in {"env", ".env"} and not _looks_like_venv(candidate):
+            continue
+        return candidate
     return None
 
 

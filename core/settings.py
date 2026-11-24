@@ -7,6 +7,7 @@ import copy
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -72,6 +73,10 @@ class SettingsManager:
             if self.settings_path.exists():
                 with open(self.settings_path, "r", encoding="utf-8") as f:
                     user_settings = json.load(f)
+                if not isinstance(user_settings, dict):
+                    # "null", a list, or a single word is valid JSON and still
+                    # not a settings file. Keep the file and use the defaults.
+                    raise ValueError("settings file is not an object")
                 # Deep merge with defaults
                 self._settings = self._deep_merge(DEFAULT_SETTINGS, user_settings)
                 logger.info("Loaded settings from %s", self.settings_path)
@@ -79,7 +84,7 @@ class SettingsManager:
                 self._settings = copy.deepcopy(DEFAULT_SETTINGS)
                 self.save()
                 logger.info("Created default settings at %s", self.settings_path)
-        except (json.JSONDecodeError, OSError) as e:
+        except (json.JSONDecodeError, OSError, TypeError, ValueError) as e:
             logger.error("Failed to load settings: %s. Using defaults.", e)
             self._settings = copy.deepcopy(DEFAULT_SETTINGS)
         return self._settings
@@ -105,6 +110,10 @@ class SettingsManager:
             The setting value or default.
         """
         category_data = self._settings.get(category, {})
+        if not isinstance(category_data, dict):
+            # A hand-edited file can put a word where a group of settings
+            # belongs. Treat that group as missing instead of crashing.
+            return {} if key is None else default
         if key is None:
             return category_data
         return category_data.get(key, default)
@@ -117,9 +126,7 @@ class SettingsManager:
             key: Key within the category.
             value: Value to set.
         """
-        if category not in self._settings:
-            self._settings[category] = {}
-        self._settings[category][key] = value
+        self._ensure_category(category)[key] = value
         self.save()
 
     def update_category(self, category: str, updates: Dict[str, Any]) -> None:
@@ -129,9 +136,7 @@ class SettingsManager:
             category: Settings category.
             updates: Dictionary of key-value pairs to update.
         """
-        if category not in self._settings:
-            self._settings[category] = {}
-        self._settings[category].update(updates)
+        self._ensure_category(category).update(updates)
         self.save()
 
     def reset(self, category: Optional[str] = None) -> None:
@@ -147,6 +152,15 @@ class SettingsManager:
             self._settings = copy.deepcopy(DEFAULT_SETTINGS)
         self.save()
         logger.info("Settings reset to defaults")
+
+    def _ensure_category(self, category: str) -> Dict[str, Any]:
+        """The group of settings for ``category``, repaired if it was damaged."""
+        current = self._settings.get(category)
+        if isinstance(current, dict):
+            return current
+        repaired = dict(DEFAULT_SETTINGS.get(category) or {})
+        self._settings[category] = repaired
+        return repaired
 
     def all_settings(self) -> Dict[str, Any]:
         """Return all current settings."""
@@ -176,27 +190,204 @@ class SettingsManager:
 settings_manager = SettingsManager()
 
 
-def projects_root() -> Path:
-    """The main projects folder, and the only folder Docker may mount.
+# Notes from the last time the projects folder was chosen, so the dashboard
+# can show them after the console window has already moved on.
+_root_notes: list = []
+# The "Created …" sentence is true only on the call that makes the folder.
+# Startup does that before the page loads, so the sentence is remembered
+# until the dashboard asks, and only while that same folder is in use.
+_created_note = ""
+_created_for = ""
 
-    Order: the root chosen in the dashboard, then SETUP_MANAGER_SAFE_ROOT,
-    then the built-in default. An empty dashboard value means "use the next one".
+
+def default_projects_folder() -> Path:
+    """Where projects go when nobody has chosen a folder."""
+    return Path.home() / "Projects"
+
+
+def _folded(path: Path) -> str:
+    return os.path.normcase(os.path.normpath(str(path)))
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    return _folded(left) == _folded(right)
+
+
+def _is_inside(path: Path, root: Path) -> bool:
+    """True when ``path`` is ``root`` or a folder inside it."""
+    if _same_path(path, root):
+        return True
+    return _folded(path).startswith(_folded(root) + os.sep)
+
+
+def root_problem(raw: str) -> Optional[str]:
+    """Why ``raw`` cannot be the projects folder, or None when it is allowed.
+
+    The same rules apply to the dashboard, the shortcut and run.bat.
+    A missing folder is a problem, except the built-in Projects folder,
+    which is created the first time it is needed.
     """
-    configured = settings_manager.get("paths", "safe_root") or os.getenv("SETUP_MANAGER_SAFE_ROOT")
-    default = str(Path.home() / "Projects")
-    return Path(configured or default).expanduser().resolve()
+    if not raw or not str(raw).strip():
+        return "A project folder path is required."
+    if "\x00" in str(raw):
+        return "That path is not valid."
+    try:
+        candidate = Path(str(raw).strip()).expanduser()
+    except (OSError, ValueError):
+        return "That path is not valid."
+    if not candidate.is_absolute():
+        return "Use a full path, for example C:\\Users\\You\\Projects"
+    try:
+        resolved = candidate.resolve()
+    except OSError:
+        return "That path could not be read."
+
+    default = default_projects_folder()
+    try:
+        default_resolved = default.resolve()
+    except OSError:
+        default_resolved = default
+    missing_ok = _same_path(resolved, default_resolved)
+    if not resolved.is_dir() and not missing_ok:
+        return f"Folder does not exist: {resolved}"
+    if resolved.parent == resolved:
+        return "A whole drive cannot be the projects root; pick a folder on it."
+
+    home = Path.home().resolve()
+    if _same_path(resolved, home):
+        return (
+            f"{resolved} cannot be the projects folder. "
+            "That is your whole home folder. Use a folder inside it, such as Projects."
+        )
+
+    # Downloads and Desktop are where a zip usually gets unpacked. Using
+    # either one would let Setup Manager open every file that landed there.
+    for name in ("Downloads", "Desktop"):
+        unpack = home / name
+        try:
+            unpack = unpack.resolve()
+        except OSError:
+            continue
+        if _same_path(resolved, unpack):
+            return (
+                f"{resolved} cannot be the projects folder. "
+                "That is where downloads and unpacked zip files land. "
+                "Use a folder such as Projects."
+            )
+
+    blocked = []
+    if sys.platform == "win32":
+        blocked.append(Path(os.environ.get("SystemRoot", r"C:\Windows")))
+        blocked.extend(
+            Path(os.environ[name])
+            for name in ("ProgramFiles", "ProgramFiles(x86)")
+            if os.environ.get(name)
+        )
+    else:
+        blocked.extend(Path(item) for item in ("/etc", "/usr", "/bin", "/sbin", "/var", "/boot", "/root"))
+    for item in blocked:
+        try:
+            item = item.resolve()
+        except OSError:
+            continue
+        if _is_inside(resolved, item):
+            return f"{resolved} cannot be the projects root"
+    return None
+
+
+def _configured_roots() -> list:
+    """The folders someone asked for, most specific first.
+
+    The dashboard choice wins, then SETUP_MANAGER_SAFE_ROOT. The folder
+    the program was unpacked into is never on this list.
+    """
+    choices = []
+    dashboard = settings_manager.get("paths", "safe_root") or ""
+    if str(dashboard).strip():
+        choices.append(("The folder chosen in the dashboard", str(dashboard).strip()))
+    env = (os.getenv("SETUP_MANAGER_SAFE_ROOT") or "").strip()
+    if env:
+        choices.append(("SETUP_MANAGER_SAFE_ROOT", env))
+    return choices
+
+
+def ensure_projects_root() -> Path:
+    """The projects folder every entry point should use.
+
+    An invalid choice is skipped, with a sentence kept for the user.
+    When nothing valid is set, the Projects folder in the home directory
+    is created if it is not there yet.
+    """
+    global _root_notes, _created_note, _created_for
+    notes = []
+    chosen = None
+    for label, raw in _configured_roots():
+        problem = root_problem(raw)
+        if problem:
+            notes.append(f"{label} is set to {raw}. {problem}")
+            continue
+        try:
+            chosen = Path(raw).expanduser().resolve()
+        except OSError:
+            notes.append(f"{label} is set to {raw}. That path could not be read.")
+            continue
+        break
+
+    if chosen is None:
+        try:
+            chosen = default_projects_folder().expanduser().resolve()
+        except OSError:
+            chosen = default_projects_folder().expanduser()
+        if notes:
+            notes.append(f"Using {chosen} instead.")
+            notes.append(
+                "To pick a different folder, set SETUP_MANAGER_SAFE_ROOT in run.local.bat, "
+                "or click Set as projects root in the dashboard."
+            )
+
+    if not chosen.is_dir():
+        try:
+            chosen.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            notes.append(
+                f"Could not create {chosen}: {exc}. "
+                "Create that folder yourself, or set SETUP_MANAGER_SAFE_ROOT in run.local.bat."
+            )
+        else:
+            _created_for = _folded(chosen)
+            _created_note = (
+                f"Created {chosen} for your projects. "
+                "To use a different folder, set SETUP_MANAGER_SAFE_ROOT in run.local.bat, "
+                "or click Set as projects root in the dashboard."
+            )
+            notes.append(_created_note)
+    if _created_note and _created_for == _folded(chosen) and _created_note not in notes:
+        notes.insert(0, _created_note)
+    _root_notes = notes
+    return chosen
+
+
+def projects_root_notes() -> list:
+    """Sentences from the last projects-folder choice. Empty when it was fine."""
+    return list(_root_notes)
+
+
+def projects_root() -> Path:
+    """The main projects folder, and the only folder Docker may mount."""
+    return ensure_projects_root()
 
 
 def allowed_project_roots() -> list:
     """Folders a project path may live in.
 
-    The dashboard choice is the main folder. When SETUP_MANAGER_SAFE_ROOT
-    points somewhere else, that folder stays allowed too, so tools kept
-    in a second folder can still be opened.
+    The folder in use is the main one. A second folder stays allowed when
+    SETUP_MANAGER_SAFE_ROOT points somewhere else and that place is safe,
+    so tools kept in a second folder can still be opened. An unsafe value
+    is not added.
     """
     roots = [projects_root()]
-    extra = os.getenv("SETUP_MANAGER_SAFE_ROOT")
-    if not extra:
+    extra = (os.getenv("SETUP_MANAGER_SAFE_ROOT") or "").strip()
+    if not extra or root_problem(extra):
         return roots
     try:
         path = Path(extra).expanduser().resolve()

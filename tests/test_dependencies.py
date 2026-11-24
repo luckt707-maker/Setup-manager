@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.dependencies import (  # noqa: E402
     declared_requirements,
+    install_arguments,
     node_dependencies,
     scan_imports,
 )
@@ -101,6 +102,58 @@ def test_a_poetry_tilde_becomes_a_pip_range(tmp_path):
     assert by_name["requests"].specifier == ">=2.22.0,<2.23.0"
 
 
+def test_a_windows_only_package_keeps_its_environment_marker(tmp_path):
+    """'colorama; platform_system == "Windows"' must stay a marker.
+
+    Gluing the marker on with a comma makes pip reject the whole install,
+    so nothing else in the file gets installed either.
+    """
+    project = _project(tmp_path, {
+        "requirements.txt": 'colorama>=0.4.6; platform_system == "Windows"\n',
+    })
+
+    declared = declared_requirements(project)
+
+    assert declared.requirements[0].to_pip() == 'colorama>=0.4.6; platform_system == "Windows"'
+
+
+def test_a_direct_download_is_not_rewritten_into_a_broken_name(tmp_path):
+    """'demo @ https://…' is a web address, not a package version.
+
+    Stripping the spaces turns it into 'demo@https://…', which pip cannot
+    read, and that one bad line fails the whole install.
+    """
+    project = _project(tmp_path, {"pyproject.toml": """
+[project]
+name = "demo"
+version = "0.1.0"
+dependencies = [
+    "requests>=2.22.0",
+    "demo @ https://example.com/demo.whl",
+]
+"""})
+
+    declared = declared_requirements(project)
+
+    assert [item.name for item in declared.requirements] == ["requests"]
+    assert any(item.name == "demo" and "URL" in item.reason for item in declared.skipped)
+    joined = " ".join(install_arguments(project))
+    assert "example.com" not in joined
+    assert "requests>=2.22.0" in joined
+
+
+def test_a_poetry_double_equals_is_still_an_exact_version(tmp_path):
+    """Poetry's '=' and a copied '==' both mean 'exactly this version'."""
+    project = _project(
+        tmp_path,
+        {"pyproject.toml": '[tool.poetry.dependencies]\npython = "^3.9"\nrequests = "==2.22.0"\n'},
+    )
+
+    by_name = {req.name: req for req in declared_requirements(project).requirements}
+
+    assert by_name["requests"].specifier == "==2.22.0"
+
+
 def test_a_pep621_project_declares_its_packages(tmp_path):
     """The standard [project] table is what newer tools write."""
     project = _project(tmp_path, {"pyproject.toml": PEP621_PROJECT})
@@ -111,6 +164,42 @@ def test_a_pep621_project_declares_its_packages(tmp_path):
     assert "requests" in declared.names(), declared.names()
     assert "flask" in declared.names(), declared.names()
     assert by_name["requests"].specifier == ">=2.22.0"
+
+
+def test_a_common_requirements_file_is_installed(tmp_path):
+    """requirements.txt that only says '-r requirements/common.txt' still installs."""
+    project = _project(tmp_path, {
+        "requirements.txt": "-r requirements/common.txt\n",
+        "requirements/common.txt": "requests>=2.22.0\n",
+        "requirements/dev.txt": "pytest\n",
+        "requirements/docs.txt": "sphinx\n",
+    })
+
+    from core.dependencies import install_arguments
+
+    declared = declared_requirements(project)
+    arguments = install_arguments(project)
+
+    assert "requests" in declared.names()
+    assert "pytest" not in declared.names()
+    assert "sphinx" not in declared.names()
+    assert "requirements/common.txt" in arguments
+    assert "dev.txt" not in " ".join(arguments)
+    assert "docs.txt" not in " ".join(arguments)
+
+
+def test_an_env_folder_without_python_is_not_a_virtual_environment(tmp_path):
+    """A settings folder named env or .env is not where packages go."""
+    from core.dependencies import find_venv
+
+    project = _project(tmp_path, {})
+    (project / "env").mkdir()
+    (project / ".env").mkdir()
+    assert find_venv(project) is None
+
+    real = project / "env"
+    (real / "pyvenv.cfg").write_text("home = somewhere\n", encoding="utf-8")
+    assert find_venv(project) == real
 
 
 def test_a_requirements_folder_installs_only_the_runtime_list(tmp_path):

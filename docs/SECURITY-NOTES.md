@@ -31,8 +31,10 @@ are a safety net, not a guarantee.
 - **Safe root.** Project paths are resolved (including `..`, symlinks,
   and junctions) and must land inside the projects root. The root is the
   folder chosen in the dashboard, or `SETUP_MANAGER_SAFE_ROOT`, or a
-  `Projects` folder in your user profile. A whole drive, your home
-  folder itself, Windows, and Program Files cannot be set as the root.
+  `Projects` folder in your user profile (created if it is missing).
+  A whole drive, your home folder itself, Downloads, Desktop, Windows,
+  and Program Files cannot be set as the root. The folder the zip was
+  unpacked into is not used automatically.
 - **Microsoft Defender.** On Windows, a custom Defender scan can run
   before installs, launches, and some other actions. A detected threat
   blocks the operation. If Defender is unavailable, the operation

@@ -1023,7 +1023,7 @@ async function checkAi(){
   if(cur&&ai.state!==previous)refreshGuide()}
 $('ai').style.cursor='pointer';$('ai').onclick=checkAi;
 // Initialize app
-(async()=>{try{cfg=await api('/api/config');$('ver').textContent='v'+cfg.version;$('root').textContent='root: '+cfg.safe_root;if(cfg.roots&&cfg.roots.length)$('lookline').textContent='Looking in '+cfg.roots.join(' and ')+'. Type a name if you are not sure which folder.'}catch(e){toast(e.message,1)}
+(async()=>{try{cfg=await api('/api/config');$('ver').textContent='v'+cfg.version;$('root').textContent='root: '+cfg.safe_root;if(cfg.roots&&cfg.roots.length)$('lookline').textContent='Looking in '+cfg.roots.join(' and ')+'. Type a name if you are not sure which folder.';if(cfg.root_note)toast(cfg.root_note,cfg.root_warning?1:0)}catch(e){toast(e.message,1)}
   statusBar();checkAi();setInterval(checkAi,60000);
   refreshGuide();loadProjects();refreshHistory();loadSettings();
   if(cfg&&cfg.last_project)select(cfg.last_project)})();

@@ -6,10 +6,11 @@ The shortcut launches the dashboard without a console window, opens the
 user interface, and points the app at the folder it is allowed to work in.
 Running it twice is harmless: the existing shortcut is replaced.
 """
-import os
 import subprocess
 import sys
 from pathlib import Path
+
+from core.settings import projects_root, projects_root_notes
 
 ROOT = Path(__file__).resolve().parent
 TARGET = ROOT / "app.py"
@@ -35,7 +36,8 @@ def shortcut_spec(root: Path = None, python_exe: str = None) -> dict:
     """
     root = Path(root or ROOT)
     target = _pick_python(root, python_exe)
-    safe_root = os.getenv("SETUP_MANAGER_SAFE_ROOT") or str(root.parent)
+    # Same folder the dashboard will use. Never the folder the zip was unpacked into.
+    safe_root = str(projects_root())
     return {
         "target": str(target),
         "arguments": f'"{root / "app.py"}" --auto-open --safe-root "{safe_root}"',
@@ -93,6 +95,8 @@ def create_desktop_shortcut(root: Path = None, python_exe: str = None) -> Path:
     shortcut_path = desktop / SHORTCUT_NAME
 
     print(f"🔧 Creating a shortcut for {TARGET.name}...")
+    for line in projects_root_notes():
+        print(f"   {line}")
     print(f"   Runs:      {spec['target']} {spec['arguments']}")
     print(f"   Folder:    {spec['working_directory']}")
 
